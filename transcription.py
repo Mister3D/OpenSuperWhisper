@@ -3,6 +3,7 @@ Module de transcription (mode local Whisper et mode API).
 """
 import os
 import requests
+import numpy as np
 from typing import Optional
 from pathlib import Path
 
@@ -285,12 +286,13 @@ class TranscriptionService:
             traceback.print_exc()
             return None
     
-    def transcribe_api(self, audio_file_path: str) -> Optional[str]:
+    def transcribe_api(self, audio_data: tuple) -> Optional[str]:
         """
-        Transcrit un fichier audio en utilisant l'API distante.
+        Transcrit des données audio en utilisant l'API distante.
         
         Args:
-            audio_file_path: Chemin vers le fichier audio WAV
+            audio_data: Tuple (audio_array, sample_rate, channels)
+                audio_array est un array numpy float32 normalisé entre -1.0 et 1.0
         
         Returns:
             Texte transcrit ou None en cas d'erreur
@@ -299,70 +301,94 @@ class TranscriptionService:
             return None
         
         try:
+            import io
+            import wave
+            
+            audio_array, sample_rate, channels = audio_data
+            
+            # Convertir en int16 pour WAV
+            audio_int16 = (audio_array * 32767).astype(np.int16)
+            
+            # Créer un fichier WAV en mémoire
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(channels)
+                wav_file.setsampwidth(2)  # 16 bits = 2 bytes
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(audio_int16.tobytes())
+            
             # Préparer les headers
             headers = {
                 'Authorization': f'Bearer {self.api_token}'
             }
             
-            # Préparer le fichier
-            with open(audio_file_path, 'rb') as audio_file:
-                files = {
-                    'audio': (os.path.basename(audio_file_path), audio_file, 'audio/wav')
-                }
+            # Préparer le fichier en mémoire
+            wav_buffer.seek(0)
+            files = {
+                'audio': ('audio.wav', wav_buffer, 'audio/wav')
+            }
+            
+            # Envoyer la requête
+            print(f"[API] Envoi de {len(audio_array)} échantillons à l'API...")
+            response = requests.post(
+                self.api_url,
+                headers=headers,
+                files=files,
+                timeout=30
+            )
+            
+            # Vérifier la réponse
+            response.raise_for_status()
+            
+            # Extraire le texte de la réponse
+            # L'API peut retourner JSON ou texte directement
+            try:
+                data = response.json()
+                print(f"[API] Réponse reçue: {data}")
                 
-                # Envoyer la requête
-                response = requests.post(
-                    self.api_url,
-                    headers=headers,
-                    files=files,
-                    timeout=30
-                )
-                
-                # Vérifier la réponse
-                response.raise_for_status()
-                
-                # Extraire le texte de la réponse
-                # L'API peut retourner JSON ou texte directement
-                try:
-                    data = response.json()
-                    # Si c'est un dict avec 'message', retourner le dict complet
-                    if isinstance(data, dict) and 'message' in data:
-                        return data
-                    # Sinon, extraire le texte
-                    text = data.get('text', '') or data.get('transcription', '') or data.get('message', '')
+                # Si c'est un dict avec 'message', extraire le message
+                if isinstance(data, dict):
+                    # Extraire le texte (priorité: message > text > transcription)
+                    text = data.get('message', '') or data.get('text', '') or data.get('transcription', '')
                     if text:
                         return text
-                    # Si pas de texte mais que c'est un dict, retourner le dict
-                    if isinstance(data, dict):
-                        return data
-                except ValueError:
-                    # Si ce n'est pas du JSON, prendre le texte directement
-                    text = response.text.strip()
-                    return text if text else None
-                
-                return None
+                    # Si pas de texte, retourner None
+                    return None
+            except ValueError:
+                # Si ce n'est pas du JSON, prendre le texte directement
+                text = response.text.strip()
+                return text if text else None
+            
+            return None
                 
         except requests.exceptions.RequestException as e:
             print(f"Erreur lors de la transcription API: {e}")
+            import traceback
+            traceback.print_exc()
             return None
         except Exception as e:
             print(f"Erreur lors de la transcription API: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
-    def transcribe(self, audio_file_path: str) -> Optional[str]:
+    def transcribe(self, audio_data) -> Optional[str]:
         """
-        Transcrit un fichier audio selon le mode configuré.
+        Transcrit des données audio selon le mode configuré.
         
         Args:
-            audio_file_path: Chemin vers le fichier audio WAV
+            audio_data: Pour mode local: chemin vers le fichier audio WAV (str)
+                       Pour mode API: tuple (audio_array, sample_rate, channels)
         
         Returns:
             Texte transcrit ou None en cas d'erreur
         """
         if self.mode == "local":
-            return self.transcribe_local(audio_file_path)
+            # Mode local: audio_data est un chemin de fichier
+            return self.transcribe_local(audio_data)
         elif self.mode == "api":
-            return self.transcribe_api(audio_file_path)
+            # Mode API: audio_data est un tuple (audio_array, sample_rate, channels)
+            return self.transcribe_api(audio_data)
         else:
             return None
     

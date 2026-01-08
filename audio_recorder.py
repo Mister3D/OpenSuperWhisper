@@ -116,12 +116,13 @@ class AudioRecorder:
             self.is_recording = False
             return False
     
-    def stop_recording(self) -> Optional[str]:
+    def stop_recording(self) -> Optional[tuple]:
         """
-        Arrête l'enregistrement et sauvegarde le fichier WAV.
+        Arrête l'enregistrement et retourne les données audio.
         
         Returns:
-            Chemin vers le fichier WAV créé, ou None en cas d'erreur
+            Tuple (audio_data, sample_rate, channels) ou None en cas d'erreur
+            audio_data est un array numpy float32 normalisé entre -1.0 et 1.0
         """
         if not self.is_recording:
             return None
@@ -151,47 +152,16 @@ class AudioRecorder:
                 # Pas de données enregistrées
                 return None
             
-            # Normaliser et convertir en int16 pour WAV
             # Normaliser entre -1.0 et 1.0
             if audio_array.max() > 1.0 or audio_array.min() < -1.0:
                 audio_array = np.clip(audio_array, -1.0, 1.0)
             
-            # Convertir en int16 (format WAV standard)
-            audio_int16 = (audio_array * 32767).astype(np.int16)
+            # S'assurer que c'est en float32
+            if audio_array.dtype != np.float32:
+                audio_array = audio_array.astype(np.float32)
             
-            # Créer un fichier temporaire WAV avec un nom unique
-            import uuid
-            temp_dir = Path(tempfile.gettempdir())
-            temp_file = temp_dir / f"opensuperwhisper_{uuid.uuid4().hex}.wav"
-            
-            # Sauvegarder en WAV
-            temp_file_path = str(temp_file)
-            try:
-                with wave.open(temp_file_path, 'wb') as wav_file:
-                    wav_file.setnchannels(self.channels)
-                    wav_file.setsampwidth(2)  # 16 bits = 2 bytes
-                    wav_file.setframerate(self.sample_rate)
-                    wav_file.writeframes(audio_int16.tobytes())
-            except Exception as e:
-                print(f"[AudioRecorder] ERREUR lors de l'écriture du fichier WAV: {e}")
-                return None
-            
-            # Vérifier que le fichier a bien été créé et qu'il n'est pas vide
-            if not temp_file.exists():
-                print(f"[AudioRecorder] ERREUR: Le fichier n'a pas été créé: {temp_file}")
-                return None
-            
-            file_size = temp_file.stat().st_size
-            if file_size == 0:
-                print(f"[AudioRecorder] ERREUR: Le fichier est vide: {temp_file}")
-                try:
-                    temp_file.unlink()
-                except:
-                    pass
-                return None
-            
-            print(f"[AudioRecorder] Fichier audio créé: {temp_file} ({file_size} bytes)")
-            return temp_file_path
+            print(f"[AudioRecorder] Audio enregistré: {len(audio_array)} échantillons à {self.sample_rate}Hz, {self.channels} canal(aux)")
+            return (audio_array, self.sample_rate, self.channels)
             
         except Exception as e:
             print(f"Erreur lors de l'arrêt de l'enregistrement: {e}")

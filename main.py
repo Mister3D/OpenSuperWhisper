@@ -305,10 +305,10 @@ class OpenSuperWhisperApp:
         self.system_tray.set_status("processing")
         
         # Arrêter l'enregistrement audio
-        audio_file = self.audio_recorder.stop_recording()
+        audio_data = self.audio_recorder.stop_recording()
         self.audio_feedback.play_end_sound()
         
-        if not audio_file:
+        if not audio_data:
             self.widget.root.after(0, lambda: self.widget.set_status("error"))
             self.system_tray.set_status("error")
             return
@@ -316,24 +316,48 @@ class OpenSuperWhisperApp:
         # Lancer la transcription dans un thread séparé
         threading.Thread(
             target=self._process_transcription,
-            args=(audio_file,),
+            args=(audio_data,),
             daemon=True
         ).start()
     
-    def _process_transcription(self, audio_file: str):
+    def _process_transcription(self, audio_data):
         """Traite la transcription dans un thread séparé."""
         try:
-            # Vérifier que le fichier existe
-            if not audio_file or not Path(audio_file).exists():
-                print(f"[Application] ERREUR: Fichier audio introuvable: {audio_file}")
-                self.widget.root.after(0, lambda: self.widget.set_status("error"))
-                self.system_tray.set_status("error")
-                return
-            
-            print(f"[Application] Fichier audio trouvé: {audio_file} ({Path(audio_file).stat().st_size} bytes)")
-            
-            # Transcrire
-            text = self.transcription_service.transcribe(audio_file)
+            # Préparer les données selon le mode
+            if self.transcription_service.mode == "api":
+                # Mode API: passer directement les données audio
+                print(f"[Application] Données audio: {len(audio_data[0])} échantillons")
+                text = self.transcription_service.transcribe(audio_data)
+            else:
+                # Mode local: créer un fichier temporaire (nécessaire pour Whisper)
+                import tempfile
+                import uuid
+                import wave
+                import numpy as np
+                
+                audio_array, sample_rate, channels = audio_data
+                
+                # Convertir en int16 pour WAV
+                audio_int16 = (audio_array * 32767).astype(np.int16)
+                
+                # Créer un fichier temporaire WAV
+                temp_dir = Path(tempfile.gettempdir())
+                temp_file = temp_dir / f"opensuperwhisper_{uuid.uuid4().hex}.wav"
+                
+                with wave.open(str(temp_file), 'wb') as wav_file:
+                    wav_file.setnchannels(channels)
+                    wav_file.setsampwidth(2)
+                    wav_file.setframerate(sample_rate)
+                    wav_file.writeframes(audio_int16.tobytes())
+                
+                print(f"[Application] Fichier temporaire créé: {temp_file} ({temp_file.stat().st_size} bytes)")
+                text = self.transcription_service.transcribe(str(temp_file))
+                
+                # Nettoyer le fichier temporaire
+                try:
+                    temp_file.unlink()
+                except:
+                    pass
             
             if text:
                 # Insérer le texte
@@ -354,16 +378,10 @@ class OpenSuperWhisperApp:
         
         except Exception as e:
             print(f"Erreur lors de la transcription: {e}")
+            import traceback
+            traceback.print_exc()
             self.widget.root.after(0, lambda: self.widget.set_status("error"))
             self.system_tray.set_status("error")
-        finally:
-            # Nettoyer le fichier temporaire
-            try:
-                if audio_file and Path(audio_file).exists():
-                    Path(audio_file).unlink()
-                    print(f"[Application] Fichier temporaire supprimé: {audio_file}")
-            except Exception as e:
-                print(f"[Application] Erreur lors de la suppression du fichier temporaire: {e}")
     
     def _update_status(self):
         """Met à jour le statut de l'application."""
