@@ -116,7 +116,13 @@ class OpenSuperWhisperApp:
         """Configure le raccourci clavier."""
         # Arrêter l'ancien listener si existant
         if self.hotkey_listener:
-            self.hotkey_listener.stop()
+            try:
+                self.hotkey_listener.stop()
+                # Attendre un peu pour s'assurer que le listener est bien arrêté
+                import time
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"[Application] Erreur lors de l'arrêt du listener: {e}")
         
         # Récupérer la configuration du raccourci
         self.hotkey_modifiers, self.hotkey_key = self.config.get_hotkey_tuple()
@@ -129,11 +135,16 @@ class OpenSuperWhisperApp:
         self.hotkey_active = False
         
         # Créer le listener personnalisé
-        self.hotkey_listener = keyboard.Listener(
-            on_press=self._on_key_press,
-            on_release=self._on_key_release
-        )
-        self.hotkey_listener.start()
+        try:
+            self.hotkey_listener = keyboard.Listener(
+                on_press=self._on_key_press,
+                on_release=self._on_key_release
+            )
+            self.hotkey_listener.start()
+            print(f"[Application] Raccourci clavier configuré: {self.config.get_hotkey_string()}")
+        except Exception as e:
+            print(f"[Application] Erreur lors de la création du listener: {e}")
+            self.hotkey_listener = None
     
     def _parse_key(self, key_str: str):
         """Parse une chaîne de touche en objet Key."""
@@ -312,6 +323,15 @@ class OpenSuperWhisperApp:
     def _process_transcription(self, audio_file: str):
         """Traite la transcription dans un thread séparé."""
         try:
+            # Vérifier que le fichier existe
+            if not audio_file or not Path(audio_file).exists():
+                print(f"[Application] ERREUR: Fichier audio introuvable: {audio_file}")
+                self.widget.root.after(0, lambda: self.widget.set_status("error"))
+                self.system_tray.set_status("error")
+                return
+            
+            print(f"[Application] Fichier audio trouvé: {audio_file} ({Path(audio_file).stat().st_size} bytes)")
+            
             # Transcrire
             text = self.transcription_service.transcribe(audio_file)
             
@@ -339,9 +359,11 @@ class OpenSuperWhisperApp:
         finally:
             # Nettoyer le fichier temporaire
             try:
-                Path(audio_file).unlink()
-            except Exception:
-                pass
+                if audio_file and Path(audio_file).exists():
+                    Path(audio_file).unlink()
+                    print(f"[Application] Fichier temporaire supprimé: {audio_file}")
+            except Exception as e:
+                print(f"[Application] Erreur lors de la suppression du fichier temporaire: {e}")
     
     def _update_status(self):
         """Met à jour le statut de l'application."""
@@ -375,11 +397,11 @@ class OpenSuperWhisperApp:
                 if success:
                     self.widget.root.after(0, lambda: self.widget.set_status("ok"))
                     self.widget.root.after(0, self._update_status)
-                    print("[Application] ✓ Modèle Whisper chargé avec succès au démarrage")
+                    print("[Application] [OK] Modele Whisper charge avec succes au demarrage")
                 else:
                     self.widget.root.after(0, lambda: self.widget.set_status("error"))
                     self.widget.root.after(0, self._update_status)
-                    print("[Application] ✗ Erreur lors du chargement du modèle Whisper au démarrage")
+                    print("[Application] [ERREUR] Erreur lors du chargement du modele Whisper au demarrage")
             except Exception as e:
                 print(f"[Application] Erreur lors du chargement du modèle au démarrage: {e}")
                 self.widget.root.after(0, lambda: self.widget.set_status("error"))
@@ -460,6 +482,10 @@ class OpenSuperWhisperApp:
             # Arrêter le test du microphone si actif
             if self._config_window and hasattr(self._config_window, 'test_is_recording') and self._config_window.test_is_recording:
                 self._config_window._stop_test_recording()
+            
+            # Arrêter la capture du raccourci clavier si en cours
+            if self._config_window and hasattr(self._config_window, 'hotkey_capturing') and self._config_window.hotkey_capturing:
+                self._config_window._stop_hotkey_capture()
             
             # Détruire la fenêtre
             if self._config_window:
@@ -563,11 +589,11 @@ class OpenSuperWhisperApp:
         self.widget._update_timer()
         
         # Vérifier si on doit charger le modèle Whisper au démarrage
-        # (seulement si le modèle est téléchargé mais pas chargé, et en mode local)
+        # (en mode local, charger automatiquement le modèle si disponible)
         if (self.transcription_service.mode == "local" and 
             not self.transcription_service.is_model_loaded() and
-            self.transcription_service.is_model_downloaded()):
-            print("[Application] Modèle Whisper téléchargé mais non chargé, chargement en arrière-plan...")
+            self.transcription_service.is_whisper_available()):
+            print("[Application] Mode local activé, chargement du modèle Whisper en arrière-plan...")
             # Afficher le widget si masqué pour montrer le chargement
             if not self.widget.visible:
                 self.widget.set_visible(True)

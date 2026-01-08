@@ -159,18 +159,39 @@ class AudioRecorder:
             # Convertir en int16 (format WAV standard)
             audio_int16 = (audio_array * 32767).astype(np.int16)
             
-            # Créer un fichier temporaire WAV
+            # Créer un fichier temporaire WAV avec un nom unique
+            import uuid
             temp_dir = Path(tempfile.gettempdir())
-            temp_file = temp_dir / f"opensuperwhisper_{threading.get_ident()}.wav"
+            temp_file = temp_dir / f"opensuperwhisper_{uuid.uuid4().hex}.wav"
             
             # Sauvegarder en WAV
-            with wave.open(str(temp_file), 'wb') as wav_file:
-                wav_file.setnchannels(self.channels)
-                wav_file.setsampwidth(2)  # 16 bits = 2 bytes
-                wav_file.setframerate(self.sample_rate)
-                wav_file.writeframes(audio_int16.tobytes())
+            temp_file_path = str(temp_file)
+            try:
+                with wave.open(temp_file_path, 'wb') as wav_file:
+                    wav_file.setnchannels(self.channels)
+                    wav_file.setsampwidth(2)  # 16 bits = 2 bytes
+                    wav_file.setframerate(self.sample_rate)
+                    wav_file.writeframes(audio_int16.tobytes())
+            except Exception as e:
+                print(f"[AudioRecorder] ERREUR lors de l'écriture du fichier WAV: {e}")
+                return None
             
-            return str(temp_file)
+            # Vérifier que le fichier a bien été créé et qu'il n'est pas vide
+            if not temp_file.exists():
+                print(f"[AudioRecorder] ERREUR: Le fichier n'a pas été créé: {temp_file}")
+                return None
+            
+            file_size = temp_file.stat().st_size
+            if file_size == 0:
+                print(f"[AudioRecorder] ERREUR: Le fichier est vide: {temp_file}")
+                try:
+                    temp_file.unlink()
+                except:
+                    pass
+                return None
+            
+            print(f"[AudioRecorder] Fichier audio créé: {temp_file} ({file_size} bytes)")
+            return temp_file_path
             
         except Exception as e:
             print(f"Erreur lors de l'arrêt de l'enregistrement: {e}")

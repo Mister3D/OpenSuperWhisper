@@ -5,6 +5,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from typing import Optional, Callable
 import threading
+from pynput import keyboard
+from pynput.keyboard import Key, Listener
 from config import Config
 from transcription import TranscriptionService
 
@@ -35,7 +37,7 @@ class ConfigWindow:
         
         self.root.title("Configuration - OpenSuperWhisper")
         self.root.geometry("600x700")
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)  # Permettre le redimensionnement
         
         # Variables - initialiser avec les valeurs de la config
         self._init_variables()
@@ -100,6 +102,9 @@ class ConfigWindow:
         self.hotkey_vars['alt'].set(self.config.get("hotkey.alt", False))
         self.hotkey_vars['shift'].set(self.config.get("hotkey.shift", False))
         self.hotkey_vars['key'].set(self.config.get("hotkey.key", "space"))
+        # Mettre à jour l'affichage du raccourci
+        if hasattr(self, 'hotkey_keys_frame'):
+            self._update_hotkey_display()
         self.mode_var.set(self.config.get("mode", "api"))
         self.api_url_var.set(self.config.get("api.url", ""))
         self.api_token_var.set(self.config.get("api.token", ""))
@@ -135,7 +140,7 @@ class ConfigWindow:
         """Crée le bandeau d'information en haut de la fenêtre."""
         # Frame pour le bandeau
         self.status_banner_frame = ttk.Frame(self.root)
-        self.status_banner_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+        self.status_banner_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 0))
         
         # Label pour le message de statut
         self.status_banner_label = ttk.Label(
@@ -143,9 +148,11 @@ class ConfigWindow:
             text="",
             font=('Arial', 9),
             padding=10,
-            relief=tk.RAISED
+            relief=tk.RAISED,
+            wraplength=580,  # Permettre le retour à la ligne (largeur fenêtre - padding)
+            justify=tk.LEFT  # Alignement à gauche pour le texte multiligne
         )
-        self.status_banner_label.pack(fill=tk.X)
+        self.status_banner_label.pack(fill=tk.BOTH, expand=True)  # Permettre l'expansion verticale
     
     def _update_status_banner(self):
         """Met à jour le bandeau d'information selon le statut de l'application."""
@@ -164,27 +171,27 @@ class ConfigWindow:
                 # Déterminer la raison de l'erreur
                 if transcription_service.mode == "local":
                     if not transcription_service.is_whisper_available():
-                        message = "❌ Whisper n'est pas installé. Installez-le avec: pip install openai-whisper"
+                        message = "[ERREUR] Whisper n'est pas installe. Installez-le avec: pip install openai-whisper"
                     elif not transcription_service.is_model_loaded():
                         if transcription_service.is_model_downloaded():
-                            message = "❌ Le modèle Whisper est téléchargé mais non chargé. Cliquez sur 'Charger le modèle' dans l'onglet Général."
+                            message = "[ERREUR] Le modele Whisper est telecharge mais non charge. Cliquez sur 'Charger le modele' dans l'onglet General."
                         else:
-                            message = "❌ Le modèle Whisper n'est pas chargé. Sélectionnez un modèle et cliquez sur 'Charger le modèle' dans l'onglet Général."
+                            message = "[ERREUR] Le modele Whisper n'est pas charge. Selectionnez un modele et cliquez sur 'Charger le modele' dans l'onglet General."
                     else:
-                        message = "❌ Erreur de configuration Whisper. Vérifiez les paramètres dans l'onglet Général."
+                        message = "[ERREUR] Erreur de configuration Whisper. Verifiez les parametres dans l'onglet General."
                 elif transcription_service.mode == "api":
                     if not transcription_service.api_url:
-                        message = "❌ URL de l'API non configurée. Configurez l'URL dans l'onglet Général."
+                        message = "[ERREUR] URL de l'API non configuree. Configurez l'URL dans l'onglet General."
                     elif not transcription_service.api_token:
-                        message = "❌ Token API non configuré. Configurez le token dans l'onglet Général."
+                        message = "[ERREUR] Token API non configure. Configurez le token dans l'onglet General."
                     else:
-                        message = "❌ Erreur de configuration API. Vérifiez les paramètres dans l'onglet Général."
+                        message = "[ERREUR] Erreur de configuration API. Verifiez les parametres dans l'onglet General."
                 else:
-                    message = "❌ Erreur de configuration. Vérifiez les paramètres dans l'onglet Général."
+                    message = "[ERREUR] Erreur de configuration. Verifiez les parametres dans l'onglet General."
                 bg_color = '#FFE6E6'  # Rouge clair
                 fg_color = '#CC0000'  # Rouge foncé
             else:  # ok
-                message = "✓ Configuration valide. L'application est prête à être utilisée."
+                message = "[OK] Configuration valide. L'application est prete a etre utilisee."
                 bg_color = '#E6FFE6'  # Vert clair
                 fg_color = '#006600'  # Vert foncé
             
@@ -223,27 +230,47 @@ class ConfigWindow:
     
     def _create_general_tab(self, parent):
         """Crée l'onglet Général."""
-        # Raccourci clavier
-        ttk.Label(parent, text="Raccourci clavier:", font=('Arial', 10, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        # Raccourci clavier avec nouvelle interface
+        hotkey_section_frame = ttk.Frame(parent)
+        hotkey_section_frame.pack(fill=tk.X, pady=(0, 15))
         
-        hotkey_frame = ttk.Frame(parent)
-        hotkey_frame.pack(fill=tk.X, pady=5)
+        # Titre et description
+        title_frame = ttk.Frame(hotkey_section_frame)
+        title_frame.pack(fill=tk.X, pady=(0, 10))
         
-        ttk.Checkbutton(hotkey_frame, text="Ctrl", variable=self.hotkey_vars['ctrl']).pack(side=tk.LEFT, padx=5)
-        ttk.Checkbutton(hotkey_frame, text="Alt", variable=self.hotkey_vars['alt']).pack(side=tk.LEFT, padx=5)
-        ttk.Checkbutton(hotkey_frame, text="Shift", variable=self.hotkey_vars['shift']).pack(side=tk.LEFT, padx=5)
+        ttk.Label(title_frame, text="Toggle recording", font=('Arial', 11, 'bold')).pack(anchor=tk.W)
+        ttk.Label(title_frame, text="Starts and stops recordings", font=('Arial', 9), foreground='gray').pack(anchor=tk.W)
         
-        ttk.Label(hotkey_frame, text="Touche:").pack(side=tk.LEFT, padx=(20, 5))
-        key_entry = ttk.Entry(hotkey_frame, textvariable=self.hotkey_vars['key'], width=15)
-        key_entry.pack(side=tk.LEFT, padx=5)
-        key_entry.bind('<FocusOut>', lambda e: self._auto_save())
+        # Frame pour le bouton Changer et l'affichage des touches
+        hotkey_display_frame = ttk.Frame(hotkey_section_frame)
+        hotkey_display_frame.pack(fill=tk.X, pady=5)
         
-        # Sauvegarder automatiquement quand les checkboxes changent
-        self.hotkey_vars['ctrl'].trace('w', lambda *args: self._auto_save())
-        self.hotkey_vars['alt'].trace('w', lambda *args: self._auto_save())
-        self.hotkey_vars['shift'].trace('w', lambda *args: self._auto_save())
+        # Bouton "Changer"
+        self.hotkey_change_button = ttk.Button(
+            hotkey_display_frame,
+            text="Changer",
+            command=self._start_hotkey_capture
+        )
+        self.hotkey_change_button.pack(side=tk.LEFT, padx=(0, 10))
         
-        ttk.Label(parent, text="Exemples: space, f1, a, b, etc.", font=('Arial', 8), foreground='gray').pack(anchor=tk.W, pady=(0, 15))
+        # Frame pour afficher les touches (style pilules)
+        self.hotkey_keys_frame = ttk.Frame(hotkey_display_frame)
+        self.hotkey_keys_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Variables pour la capture du raccourci
+        self.hotkey_capturing = False
+        self.hotkey_listener = None
+        self.captured_modifiers = []
+        self.captured_key = None
+        
+        # Initialiser l'affichage des touches
+        self._update_hotkey_display()
+        
+        # Sauvegarder automatiquement quand les variables changent (pour compatibilité)
+        self.hotkey_vars['ctrl'].trace('w', lambda *args: [self._update_hotkey_display(), self._auto_save()])
+        self.hotkey_vars['alt'].trace('w', lambda *args: [self._update_hotkey_display(), self._auto_save()])
+        self.hotkey_vars['shift'].trace('w', lambda *args: [self._update_hotkey_display(), self._auto_save()])
+        self.hotkey_vars['key'].trace('w', lambda *args: [self._update_hotkey_display(), self._auto_save()])
         
         # Sélection du modèle Whisper (visible avant de choisir le mode)
         whisper_model_frame = ttk.LabelFrame(parent, text="Modèle Whisper (si mode Local)", padding=10)
@@ -335,7 +362,7 @@ class ConfigWindow:
         # Bouton pour charger le modèle
         self.load_model_button = ttk.Button(
             self.whisper_frame,
-            text="❌ Charger le modèle",
+            text="[ERREUR] Charger le modele",
             command=self._load_whisper_model_async
         )
         self.load_model_button.pack(anchor=tk.W, pady=10)
@@ -362,7 +389,19 @@ class ConfigWindow:
         self.manual_device_frame = ttk.Frame(parent)
         self.manual_device_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(self.manual_device_frame, text="Sélectionner un microphone:", font=('Arial', 9)).pack(anchor=tk.W, pady=5)
+        # Frame pour le label et le bouton actualiser
+        device_header_frame = ttk.Frame(self.manual_device_frame)
+        device_header_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(device_header_frame, text="Sélectionner un microphone:", font=('Arial', 9)).pack(side=tk.LEFT, anchor=tk.W)
+        
+        # Bouton pour actualiser la liste
+        refresh_button = ttk.Button(
+            device_header_frame,
+            text="Actualiser",
+            command=self._refresh_audio_devices_list
+        )
+        refresh_button.pack(side=tk.RIGHT, padx=5)
         
         # Liste déroulante des périphériques
         self.device_combo = ttk.Combobox(
@@ -422,6 +461,13 @@ class ConfigWindow:
             command=lambda: self._on_widget_visible_changed()
         )
         widget_checkbox.pack(anchor=tk.W, pady=10)
+    
+    def _refresh_audio_devices_list(self):
+        """Actualise la liste des périphériques audio."""
+        self._load_audio_devices_list()
+        # Réactiver la combobox si elle était désactivée
+        if not self.use_default_mic_var.get():
+            self.device_combo.config(state="readonly")
     
     def _load_audio_devices_list(self):
         """Charge la liste des périphériques audio dans la combobox."""
@@ -521,7 +567,7 @@ class ConfigWindow:
         else:
             device_name = self.selected_device_var.get()
             if not device_name or device_name not in self.device_map:
-                self.test_status_label.config(text="❌ Aucun microphone sélectionné", foreground='red')
+                self.test_status_label.config(text="[ERREUR] Aucun microphone selectionne", foreground='red')
                 return
             device_index = self.device_map[device_name]
         
@@ -603,17 +649,17 @@ class ConfigWindow:
             
             if max_level > 0.001:
                 self.test_status_label.config(
-                    text=f"✓ Test terminé ! Microphone fonctionnel (Niveau max: {max_level:.3f})",
+                    text=f"[OK] Test termine ! Microphone fonctionnel (Niveau max: {max_level:.3f})",
                     foreground='green'
                 )
             else:
                 self.test_status_label.config(
-                    text="⚠ Test terminé. Microphone fonctionnel mais aucun signal détecté.",
+                    text="[WARNING] Test termine. Microphone fonctionnel mais aucun signal detecte.",
                     foreground='orange'
                 )
         else:
             self.test_status_label.config(
-                text="⚠ Aucune donnée capturée.",
+                text="[WARNING] Aucune donnee capturee.",
                 foreground='orange'
             )
     
@@ -678,7 +724,7 @@ class ConfigWindow:
         )
         
         # Afficher l'erreur
-        self.test_status_label.config(text=f"❌ Erreur: {error_msg}", foreground='red')
+        self.test_status_label.config(text=f"[ERREUR] Erreur: {error_msg}", foreground='red')
     
     def _draw_test_waveform_live(self, audio_data):
         """Dessine le waveform en temps réel sur le canvas de test."""
@@ -760,7 +806,7 @@ class ConfigWindow:
                 # Mettre à jour le statut immédiatement
                 if hasattr(self, 'whisper_status_label'):
                     self.whisper_status_label.config(
-                        text="⚠ Chargement annulé : passage en mode API",
+                        text="[WARNING] Chargement annule : passage en mode API",
                         foreground='orange'
                     )
                 if hasattr(self, 'load_model_button'):
@@ -791,13 +837,13 @@ class ConfigWindow:
             # Ne pas appeler validate_configuration() car cela peut charger le modèle de manière synchrone
             # Juste indiquer que Whisper est disponible
             self.whisper_status_label.config(
-                text="✓ Whisper est disponible. Le modèle sera chargé automatiquement.",
+                text="[OK] Whisper est disponible. Le modele sera charge automatiquement.",
                 foreground='green'
             )
         else:
-            print("[Configuration] ✗ Whisper n'est pas installé")
+            print("[Configuration] [ERREUR] Whisper n'est pas installe")
             self.whisper_status_label.config(
-                text="✗ Whisper n'est pas installé. Installez-le avec: pip install openai-whisper",
+                text="[ERREUR] Whisper n'est pas installe. Installez-le avec: pip install openai-whisper",
                 foreground='red'
             )
     
@@ -819,7 +865,7 @@ class ConfigWindow:
         service = TranscriptionService(mode="local", whisper_model=self.whisper_model_var.get())
         if not service.is_whisper_available():
             self.whisper_status_label.config(
-                text="✗ Whisper n'est pas installé. Installez-le avec: pip install openai-whisper",
+                text="[ERREUR] Whisper n'est pas installe. Installez-le avec: pip install openai-whisper",
                 foreground='red'
             )
             return
@@ -930,10 +976,10 @@ class ConfigWindow:
         
         if success:
             self.whisper_status_label.config(
-                text=f"✓ Modèle '{model_name}' chargé avec succès !",
+                text=f"[OK] Modele '{model_name}' charge avec succes !",
                 foreground='green'
             )
-            print(f"[Configuration] ✓ Modèle '{model_name}' chargé avec succès dans l'interface")
+            print(f"[Configuration] [OK] Modele '{model_name}' charge avec succes dans l'interface")
             # Mettre à jour le bouton
             self._update_load_model_button()
             # Recharger les composants pour mettre à jour le statut
@@ -944,10 +990,10 @@ class ConfigWindow:
         else:
             error_msg = error if error else "Erreur inconnue"
             self.whisper_status_label.config(
-                text=f"✗ Erreur lors du chargement du modèle '{model_name}': {error_msg}",
+                text=f"[ERREUR] Erreur lors du chargement du modele '{model_name}': {error_msg}",
                 foreground='red'
             )
-            print(f"[Configuration] ✗ Erreur lors du chargement du modèle '{model_name}': {error_msg}")
+            print(f"[Configuration] [ERREUR] Erreur lors du chargement du modele '{model_name}': {error_msg}")
             # Mettre à jour le bouton
             self._update_load_model_button()
     
@@ -961,14 +1007,14 @@ class ConfigWindow:
             if self.app_instance and self.app_instance.transcription_service:
                 service = self.app_instance.transcription_service
                 if service.mode == "local" and service.is_model_loaded():
-                    self.load_model_button.config(text="✓ Modèle chargé", state="normal")
+                    self.load_model_button.config(text="[OK] Modele charge", state="normal")
                 else:
                     self.load_model_button.config(text="❌ Charger le modèle", state="normal")
             else:
                 # Si pas d'instance, vérifier avec un nouveau service
                 service = TranscriptionService(mode="local", whisper_model=self.whisper_model_var.get())
                 if service.is_model_loaded():
-                    self.load_model_button.config(text="✓ Modèle chargé", state="normal")
+                    self.load_model_button.config(text="[OK] Modele charge", state="normal")
                 else:
                     self.load_model_button.config(text="❌ Charger le modèle", state="normal")
         except Exception as e:
@@ -1174,6 +1220,184 @@ class ConfigWindow:
         # Recharger les composants si callback disponible
         if self.on_save:
             self.on_save()
+    
+    def _start_hotkey_capture(self):
+        """Démarre la capture du raccourci clavier."""
+        if self.hotkey_capturing:
+            return
+        
+        self.hotkey_capturing = True
+        self.captured_modifiers = []
+        self.captured_key = None
+        
+        # Changer le texte du bouton et enlever le focus
+        self.hotkey_change_button.config(text="Appuyez sur les touches...", state="disabled")
+        # Enlever le focus du bouton pour éviter que Espace/Entrée l'activent
+        try:
+            self.root.focus_set()
+        except:
+            pass
+        
+        # Mettre à jour l'affichage pour montrer qu'on attend
+        self._update_hotkey_display(capturing=True)
+        
+        # Démarrer le listener dans un thread séparé
+        def start_listener():
+            self.hotkey_listener = keyboard.Listener(
+                on_press=self._on_hotkey_press,
+                on_release=self._on_hotkey_release
+            )
+            self.hotkey_listener.start()
+        
+        threading.Thread(target=start_listener, daemon=True).start()
+    
+    def _on_hotkey_press(self, key):
+        """Callback appelé quand une touche est pressée pendant la capture."""
+        if not self.hotkey_capturing:
+            return
+        
+        try:
+            # Identifier les modificateurs
+            if key in [Key.ctrl, Key.ctrl_l, Key.ctrl_r]:
+                if 'ctrl' not in self.captured_modifiers:
+                    self.captured_modifiers.append('ctrl')
+            elif key in [Key.alt, Key.alt_l, Key.alt_r]:
+                if 'alt' not in self.captured_modifiers:
+                    self.captured_modifiers.append('alt')
+            elif key in [Key.shift, Key.shift_l, Key.shift_r]:
+                if 'shift' not in self.captured_modifiers:
+                    self.captured_modifiers.append('shift')
+            else:
+                # Touche principale
+                if isinstance(key, Key):
+                    # Touche spéciale
+                    key_map = {
+                        Key.space: 'space',
+                        Key.enter: 'enter',
+                        Key.tab: 'tab',
+                        Key.esc: 'esc',
+                        Key.f1: 'f1', Key.f2: 'f2', Key.f3: 'f3', Key.f4: 'f4',
+                        Key.f5: 'f5', Key.f6: 'f6', Key.f7: 'f7', Key.f8: 'f8',
+                        Key.f9: 'f9', Key.f10: 'f10', Key.f11: 'f11', Key.f12: 'f12',
+                    }
+                    self.captured_key = key_map.get(key, None)
+                else:
+                    # Touche normale
+                    if hasattr(key, 'char') and key.char:
+                        self.captured_key = key.char.lower()
+                    else:
+                        try:
+                            key_str = str(key).replace("'", "").lower()
+                            self.captured_key = key_str
+                        except:
+                            pass
+                
+                # Si on a une touche principale, arrêter la capture
+                if self.captured_key:
+                    self._stop_hotkey_capture()
+        except Exception as e:
+            print(f"Erreur lors de la capture du raccourci: {e}")
+    
+    def _on_hotkey_release(self, key):
+        """Callback appelé quand une touche est relâchée pendant la capture."""
+        # Ne rien faire, on attend juste la touche principale
+        pass
+    
+    def _stop_hotkey_capture(self):
+        """Arrête la capture du raccourci clavier."""
+        if not self.hotkey_capturing:
+            return
+        
+        self.hotkey_capturing = False
+        
+        # Arrêter le listener
+        if self.hotkey_listener:
+            try:
+                self.hotkey_listener.stop()
+            except:
+                pass
+            self.hotkey_listener = None
+        
+        # Mettre à jour les variables si on a capturé quelque chose
+        if self.captured_key:
+            self.hotkey_vars['ctrl'].set('ctrl' in self.captured_modifiers)
+            self.hotkey_vars['alt'].set('alt' in self.captured_modifiers)
+            self.hotkey_vars['shift'].set('shift' in self.captured_modifiers)
+            self.hotkey_vars['key'].set(self.captured_key)
+        
+        # Restaurer le bouton
+        self.hotkey_change_button.config(text="Changer", state="normal")
+        
+        # Enlever le focus du bouton pour éviter que Espace/Entrée relancent la capture
+        # Utiliser after() pour différer et éviter les conflits avec la touche capturée
+        def remove_focus():
+            try:
+                # Forcer le focus sur la fenêtre principale au lieu du bouton
+                self.root.focus_set()
+            except:
+                pass
+        
+        self.root.after(100, remove_focus)  # Attendre 100ms avant d'enlever le focus
+        
+        # Mettre à jour l'affichage
+        self._update_hotkey_display()
+    
+    def _update_hotkey_display(self, capturing=False):
+        """Met à jour l'affichage visuel des touches du raccourci."""
+        # Nettoyer le frame
+        for widget in self.hotkey_keys_frame.winfo_children():
+            widget.destroy()
+        
+        if capturing:
+            # Afficher un message pendant la capture
+            label = ttk.Label(
+                self.hotkey_keys_frame,
+                text="Appuyez sur les touches...",
+                font=('Arial', 9),
+                foreground='blue'
+            )
+            label.pack(side=tk.LEFT)
+        else:
+            # Afficher les touches actuelles
+            modifiers = []
+            if self.hotkey_vars['ctrl'].get():
+                modifiers.append('Ctrl')
+            if self.hotkey_vars['alt'].get():
+                modifiers.append('Alt')
+            if self.hotkey_vars['shift'].get():
+                modifiers.append('Shift')
+            
+            key = self.hotkey_vars['key'].get()
+            if key:
+                # Afficher chaque touche comme un bouton/pilule
+                for mod in modifiers:
+                    key_label = tk.Label(
+                        self.hotkey_keys_frame,
+                        text=mod,
+                        font=('Arial', 9, 'bold'),
+                        bg='#E0E0E0',
+                        fg='#333333',
+                        relief=tk.RAISED,
+                        borderwidth=1,
+                        padx=8,
+                        pady=4
+                    )
+                    key_label.pack(side=tk.LEFT, padx=2)
+                
+                # Afficher la touche principale
+                key_display = key.title() if key else "Space"
+                key_label = tk.Label(
+                    self.hotkey_keys_frame,
+                    text=key_display,
+                    font=('Arial', 9, 'bold'),
+                    bg='#E0E0E0',
+                    fg='#333333',
+                    relief=tk.RAISED,
+                    borderwidth=1,
+                    padx=8,
+                    pady=4
+                )
+                key_label.pack(side=tk.LEFT, padx=2)
         # Mettre à jour le bandeau d'information après la sauvegarde
         self._update_status_banner()
     

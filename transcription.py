@@ -191,7 +191,7 @@ class TranscriptionService:
                     finally:
                         self._loading_in_progress = False
                 
-                print(f"[Whisper] ✓ Modèle '{self.whisper_model}' chargé avec succès!")
+                print(f"[Whisper] [OK] Modele '{self.whisper_model}' charge avec succes!")
             else:
                 print(f"[Whisper] Le modèle '{self.whisper_model}' est déjà chargé.")
             return True
@@ -218,19 +218,71 @@ class TranscriptionService:
         try:
             import whisper
             
+            # Vérifier que le fichier existe
+            if not Path(audio_file_path).exists():
+                print(f"[Whisper] ERREUR: Fichier audio introuvable: {audio_file_path}")
+                return None
+            
             # Charger le modèle si nécessaire
             if self.whisper_model_obj is None:
                 if not self.load_whisper_model():
                     return None
             
-            # Transcrire
-            result = self.whisper_model_obj.transcribe(audio_file_path, language="fr")
-            text = result.get("text", "").strip()
+            print(f"[Whisper] Début de la transcription du fichier: {audio_file_path}")
             
+            # Charger l'audio avec soundfile au lieu d'utiliser ffmpeg
+            try:
+                import soundfile as sf
+                import numpy as np
+                
+                # Charger l'audio
+                audio_data, sample_rate = sf.read(audio_file_path)
+                
+                # Convertir en mono si stéréo
+                if len(audio_data.shape) > 1:
+                    audio_data = np.mean(audio_data, axis=1)
+                
+                # Normaliser entre -1.0 et 1.0
+                if audio_data.dtype != np.float32:
+                    if audio_data.dtype == np.int16:
+                        audio_data = audio_data.astype(np.float32) / 32768.0
+                    elif audio_data.dtype == np.int32:
+                        audio_data = audio_data.astype(np.float32) / 2147483648.0
+                    else:
+                        audio_data = audio_data.astype(np.float32)
+                
+                # Resample à 16kHz si nécessaire (Whisper attend 16kHz)
+                if sample_rate != 16000:
+                    from scipy import signal
+                    num_samples = int(len(audio_data) * 16000 / sample_rate)
+                    audio_data = signal.resample(audio_data, num_samples)
+                    sample_rate = 16000
+                
+                print(f"[Whisper] Audio chargé: {len(audio_data)} échantillons à {sample_rate}Hz")
+                
+                # Transcrire directement avec les données audio
+                result = self.whisper_model_obj.transcribe(audio_data, language="fr")
+                text = result.get("text", "").strip()
+                
+            except ImportError:
+                # Fallback: essayer avec ffmpeg si soundfile n'est pas disponible
+                print("[Whisper] soundfile non disponible, tentative avec ffmpeg...")
+                result = self.whisper_model_obj.transcribe(audio_file_path, language="fr")
+                text = result.get("text", "").strip()
+            except Exception as e:
+                print(f"[Whisper] Erreur lors du chargement de l'audio avec soundfile: {e}")
+                # Fallback: essayer avec ffmpeg
+                print("[Whisper] Tentative avec ffmpeg...")
+                result = self.whisper_model_obj.transcribe(audio_file_path, language="fr")
+                text = result.get("text", "").strip()
+            
+            print(f"[Whisper] Transcription terminée: '{text[:50]}...' (longueur: {len(text)})")
             return text if text else None
             
         except Exception as e:
             print(f"Erreur lors de la transcription locale: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def transcribe_api(self, audio_file_path: str) -> Optional[str]:
@@ -359,16 +411,18 @@ class TranscriptionService:
                 if not self.load_whisper_model():
                     print("[Whisper] ERREUR: Impossible de charger le modèle")
                     return (False, "Impossible de charger le modèle Whisper")
-                print("[Whisper] ✓ Configuration validée avec succès")
+                print("[Whisper] [OK] Configuration validee avec succes")
                 return (True, "")
             else:
                 # Vérifier si le modèle est chargé
                 if self.is_model_loaded():
-                    print("[Whisper] ✓ Whisper est disponible et le modèle est chargé")
+                    print("[Whisper] [OK] Whisper est disponible et le modele est charge")
                     return (True, "")
                 else:
-                    print("[Whisper] ⚠ Whisper est disponible mais le modèle n'est pas chargé")
-                    return (False, "Modèle Whisper non chargé. Chargez-le depuis la configuration.")
+                    # En mode local, le modèle sera chargé automatiquement lors de la première transcription
+                    # Ne pas considérer cela comme une erreur si Whisper est disponible
+                    print("[Whisper] [WARNING] Whisper est disponible mais le modele n'est pas charge (sera charge automatiquement)")
+                    return (True, "")  # Retourner True car le modèle peut être chargé à la demande
             
         elif self.mode == "api":
             if not self.api_url:
