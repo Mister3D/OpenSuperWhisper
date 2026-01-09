@@ -942,6 +942,14 @@ class ConfigWindow:
             command=lambda: self._on_widget_visible_changed()
         )
         self.widget_checkbox.pack(anchor=tk.W, pady=10)
+        
+        # Bouton pour réinitialiser la position du widget
+        self.reset_widget_position_button = ttk.Button(
+            self.interface_section_frame,
+            text=self.lang.get("reset_widget_position"),
+            command=self._reset_widget_position
+        )
+        self.reset_widget_position_button.pack(anchor=tk.W, pady=5)
 
     def _create_processing_mode_section(self, parent):
         """Crée la section Mode de traitement."""
@@ -1051,6 +1059,8 @@ class ConfigWindow:
             self.interface_config_title_label.config(text=self.lang.get("interface_config_title"))
         if hasattr(self, 'widget_checkbox'):
             self.widget_checkbox.config(text=self.lang.get("show_widget_checkbox"))
+        if hasattr(self, 'reset_widget_position_button'):
+            self.reset_widget_position_button.config(text=self.lang.get("reset_widget_position"))
         
         # Mettre à jour le label de langue
         if hasattr(self, 'language_label'):
@@ -1525,6 +1535,41 @@ class ConfigWindow:
             print(f"[Configuration] Erreur dans _on_widget_visible_changed: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _reset_widget_position(self):
+        """Réinitialise la position du widget à la position par défaut."""
+        try:
+            # Position par défaut
+            default_x, default_y = 50, 50
+            
+            # Sauvegarder la nouvelle position dans la configuration
+            self.config.set_widget_position(default_x, default_y)
+            print(f"[Configuration] Position du widget réinitialisée à ({default_x}, {default_y})")
+            
+            # Mettre à jour le widget si disponible
+            if self.app_instance and self.app_instance.widget:
+                try:
+                    # Utiliser after() pour s'assurer que l'appel se fait dans le bon thread Tkinter
+                    self.app_instance.widget.root.after(0, lambda: self.app_instance.widget.set_position(default_x, default_y))
+                    print(f"[Configuration] Widget déplacé à ({default_x}, {default_y})")
+                except Exception as e:
+                    print(f"[Configuration] Erreur lors du déplacement du widget: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Afficher un message de confirmation
+            messagebox.showinfo(
+                self.lang.get("window_title"),
+                self.lang.get("widget_position_reset")
+            )
+        except Exception as e:
+            print(f"[Configuration] Erreur dans _reset_widget_position: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror(
+                "Erreur",
+                f"Erreur lors de la réinitialisation de la position: {e}"
+            )
     
     def _auto_save(self):
         """Sauvegarde automatiquement la configuration."""

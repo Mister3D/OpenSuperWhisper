@@ -37,6 +37,8 @@
   "interface_config_title": "Interface configuration",
   "language_label": "Language",
   "show_widget_checkbox": "Show floating widget (will always be visible during recording)",
+  "reset_widget_position": "Reset widget position",
+  "widget_position_reset": "Widget position reset to (50, 50)",
   "transcription_progress": "Transcription in progress...",
   "close_button": "Close",
   "status_loading": "⏳ Loading Whisper model... The widget blinks orange during loading.",

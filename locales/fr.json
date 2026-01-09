@@ -37,6 +37,8 @@
   "interface_config_title": "Configuration de l'interface",
   "language_label": "Langue",
   "show_widget_checkbox": "Afficher le widget flottant (sera toujours visible pendant l'enregistrement)",
+  "reset_widget_position": "Réinitialiser la position du widget",
+  "widget_position_reset": "Position du widget réinitialisée à (50, 50)",
   "transcription_progress": "Transcription en cours...",
   "close_button": "Fermer",
   "status_loading": "⏳ Chargement du modèle Whisper en cours... Le widget clignote en orange pendant le chargement.",
