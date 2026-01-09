@@ -286,12 +286,12 @@ class TranscriptionService:
             traceback.print_exc()
             return None
     
-    def transcribe_api(self, audio_data: tuple) -> Optional[str]:
+    def transcribe_api(self, audio_data) -> Optional[str]:
         """
         Transcrit des données audio en utilisant l'API distante.
         
         Args:
-            audio_data: Tuple (audio_array, sample_rate, channels)
+            audio_data: Tuple (audio_array, sample_rate, channels) ou chemin vers fichier audio (str)
                 audio_array est un array numpy float32 normalisé entre -1.0 et 1.0
         
         Returns:
@@ -303,8 +303,30 @@ class TranscriptionService:
         try:
             import io
             import wave
+            import soundfile as sf
             
-            audio_array, sample_rate, channels = audio_data
+            # Si audio_data est un chemin de fichier, le charger
+            if isinstance(audio_data, (str, Path)):
+                audio_file_path = str(audio_data)
+                audio_array, sample_rate = sf.read(audio_file_path)
+                
+                # Convertir en mono si stéréo
+                if len(audio_array.shape) > 1:
+                    audio_array = np.mean(audio_array, axis=1)
+                
+                # Normaliser en float32
+                if audio_array.dtype != np.float32:
+                    if audio_array.dtype == np.int16:
+                        audio_array = audio_array.astype(np.float32) / 32768.0
+                    elif audio_array.dtype == np.int32:
+                        audio_array = audio_array.astype(np.float32) / 2147483648.0
+                    else:
+                        audio_array = audio_array.astype(np.float32)
+                
+                channels = 1  # Toujours mono après conversion
+            else:
+                # audio_data est un tuple (audio_array, sample_rate, channels)
+                audio_array, sample_rate, channels = audio_data
             
             # Convertir en int16 pour WAV
             audio_int16 = (audio_array * 32767).astype(np.int16)

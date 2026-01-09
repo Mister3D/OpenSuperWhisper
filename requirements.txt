@@ -9,4 +9,7 @@ Pillow>=10.0.0
 requests>=2.31.0
 pyperclip>=1.8.2
 pywin32>=306; sys_platform == 'win32'
-
+sv-ttk>=2.6.0
+darkdetect>=0.8.0
+pywinstyles>=1.8; sys_platform == 'win32'
+cairosvg>=2.7.0
