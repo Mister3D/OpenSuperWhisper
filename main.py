@@ -24,7 +24,33 @@ class OpenSuperWhisperApp:
     
     def __init__(self):
         """Initialise l'application."""
+        # Initialiser la configuration en premier (nécessaire pour les autres méthodes)
         self.config = Config()
+        
+        # S'assurer que le cache Whisper est accessible
+        self._ensure_whisper_cache()
+        
+        # Vérifier les drivers NVIDIA au premier démarrage (une seule fois)
+        self._check_nvidia_on_first_run()
+    
+    def _ensure_whisper_cache(self):
+        """S'assure que le répertoire de cache Whisper existe et est accessible."""
+        try:
+            from pathlib import Path
+            cache_dir = Path.home() / ".cache" / "whisper"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            # Vérifier l'accessibilité en écriture
+            test_file = cache_dir / ".test_write"
+            try:
+                test_file.write_text("test")
+                test_file.unlink()
+            except Exception:
+                # Si on ne peut pas écrire, afficher un avertissement mais continuer
+                # (l'utilisateur pourra peut-être utiliser un autre emplacement)
+                pass
+        except Exception:
+            # Ignorer les erreurs - Whisper gérera cela lui-même
+            pass
         self.widget = None
         self.system_tray = None
         self.audio_recorder = None
@@ -45,6 +71,44 @@ class OpenSuperWhisperApp:
         
         # Initialiser les composants
         self._initialize_components()
+    
+    def _check_nvidia_on_first_run(self):
+        """Vérifie les drivers NVIDIA au premier démarrage et informe l'utilisateur si nécessaire."""
+        try:
+            config = Config()
+            nvidia_checked = config.get("nvidia_drivers_checked", False)
+            
+            if not nvidia_checked:
+                # Vérifier si un GPU NVIDIA est présent
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ['nvidia-smi'],
+                        capture_output=True,
+                        text=True,
+                        timeout=3
+                    )
+                    if result.returncode != 0:
+                        # GPU NVIDIA probablement présent mais drivers non installés
+                        print("[Application] [INFO] GPU NVIDIA détecté mais drivers non installés.")
+                        print("[Application] [INFO] Pour utiliser l'accélération GPU:")
+                        print("[Application] [INFO]   1. Installez les drivers NVIDIA depuis https://www.nvidia.com/Download/")
+                        print("[Application] [INFO]   2. Redémarrez votre ordinateur")
+                        print("[Application] [INFO]   3. L'application utilisera automatiquement le GPU si disponible")
+                        print("[Application] [INFO] L'application fonctionnera en mode CPU pour l'instant.")
+                except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                    # nvidia-smi non disponible - pas de GPU ou drivers non installés
+                    pass
+                except Exception:
+                    # Ignorer les autres erreurs
+                    pass
+                
+                # Marquer comme vérifié pour ne pas afficher à chaque démarrage
+                config.set("nvidia_drivers_checked", True)
+                config.save()
+        except Exception:
+            # Ignorer les erreurs lors de la vérification
+            pass
     
     def _initialize_components(self):
         """Initialise tous les composants de l'application."""
@@ -404,26 +468,66 @@ class OpenSuperWhisperApp:
             print(f"Configuration invalide: {error}")
     
     def _load_whisper_model_at_startup(self):
-        """Charge le modèle Whisper au démarrage en arrière-plan."""
+        """Charge le modèle Whisper au démarrage en arrière-plan (GPU si configuré)."""
         import threading
         
         def load_thread():
             """Charge le modèle dans un thread séparé."""
             try:
-                print("[Application] Chargement du modèle Whisper en arrière-plan...")
+                # Vérifier la configuration GPU
+                device = self.transcription_service.whisper_device
+                print(f"[Application] Chargement du modèle Whisper en arrière-plan (device: {device})...")
+                
+                # Si GPU est configuré, vérifier la disponibilité avant de charger
+                if device == "cuda":
+                    try:
+                        import torch
+                        if not torch.cuda.is_available():
+                            print("[Application] [ERREUR] GPU CUDA demandé mais non disponible")
+                            self.widget.root.after(0, lambda: self.widget.set_status("error"))
+                            self.widget.root.after(0, self._update_status)
+                            return
+                        gpu_name = torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else "GPU"
+                        print(f"[Application] GPU CUDA disponible: {gpu_name}, préchargement en GPU...")
+                    except ImportError:
+                        print("[Application] [ERREUR] PyTorch non disponible pour le GPU")
+                        self.widget.root.after(0, lambda: self.widget.set_status("error"))
+                        self.widget.root.after(0, self._update_status)
+                        return
+                    except Exception as e:
+                        print(f"[Application] [ERREUR] Erreur lors de la vérification GPU: {e}")
+                        self.widget.root.after(0, lambda: self.widget.set_status("error"))
+                        self.widget.root.after(0, self._update_status)
+                        return
+                
+                # Charger le modèle (sera chargé en GPU si device="cuda" et CUDA disponible)
                 success = self.transcription_service.load_whisper_model()
                 
                 # Mettre à jour le statut dans le thread principal
                 if success:
+                    # Vérifier que le modèle est bien sur GPU si demandé
+                    if device == "cuda":
+                        try:
+                            import torch
+                            if self.transcription_service.whisper_model_obj:
+                                model_device = next(self.transcription_service.whisper_model_obj.parameters()).device
+                                if model_device.type == "cuda":
+                                    print(f"[Application] [OK] Modèle Whisper chargé avec succès sur GPU ({model_device})")
+                                else:
+                                    print(f"[Application] [WARNING] Modèle chargé mais sur {model_device.type} au lieu de GPU")
+                        except:
+                            pass
                     self.widget.root.after(0, lambda: self.widget.set_status("ok"))
                     self.widget.root.after(0, self._update_status)
-                    print("[Application] [OK] Modele Whisper charge avec succes au demarrage")
+                    print("[Application] [OK] Modèle Whisper chargé avec succès au démarrage")
                 else:
+                    print("[Application] [ERREUR] Erreur lors du chargement du modèle Whisper au démarrage")
                     self.widget.root.after(0, lambda: self.widget.set_status("error"))
                     self.widget.root.after(0, self._update_status)
-                    print("[Application] [ERREUR] Erreur lors du chargement du modele Whisper au demarrage")
             except Exception as e:
-                print(f"[Application] Erreur lors du chargement du modèle au démarrage: {e}")
+                print(f"[Application] [ERREUR] Exception lors du chargement du modèle au démarrage: {e}")
+                import traceback
+                traceback.print_exc()
                 self.widget.root.after(0, lambda: self.widget.set_status("error"))
                 self.widget.root.after(0, self._update_status)
         
@@ -611,21 +715,47 @@ class OpenSuperWhisperApp:
         self.widget._update_timer()
         
         # Vérifier si on doit charger le modèle Whisper au démarrage
-        # (en mode local, charger automatiquement le modèle si disponible)
+        # (en mode local, précharger automatiquement le modèle en GPU si la configuration est bonne)
         if (self.transcription_service.mode == "local" and 
             not self.transcription_service.is_model_loaded() and
             self.transcription_service.is_whisper_available()):
-            print("[Application] Mode local activé, chargement du modèle Whisper en arrière-plan...")
-            # Afficher le widget si masqué pour montrer le chargement
-            if not self.widget.visible:
-                self.widget.set_visible(True)
-            # Mettre le statut en "loading" avec clignotement orange IMMÉDIATEMENT
-            # Cela doit être fait AVANT tout autre appel qui pourrait changer le statut
-            self.widget.set_status("loading")
-            # Forcer la mise à jour de l'affichage pour que le clignotement orange commence immédiatement
-            self.widget.root.update()
-            # Lancer le chargement en arrière-plan après un court délai pour s'assurer que l'interface est prête
-            self.widget.root.after(500, self._load_whisper_model_at_startup)
+            # Vérifier si la configuration GPU est valide avant de précharger
+            device = self.transcription_service.whisper_device
+            should_preload = True
+            
+            if device == "cuda":
+                try:
+                    import torch
+                    if not torch.cuda.is_available():
+                        print("[Application] [WARNING] GPU CUDA demandé mais non disponible, pas de préchargement")
+                        should_preload = False
+                    else:
+                        gpu_name = torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else "GPU"
+                        print(f"[Application] GPU CUDA disponible: {gpu_name}, préchargement du modèle en GPU...")
+                except ImportError:
+                    print("[Application] [WARNING] PyTorch non disponible, pas de préchargement GPU")
+                    should_preload = False
+                except Exception as e:
+                    print(f"[Application] [WARNING] Erreur lors de la vérification GPU: {e}, pas de préchargement")
+                    should_preload = False
+            
+            if should_preload:
+                print("[Application] Mode local activé, préchargement du modèle Whisper en arrière-plan...")
+                # Afficher le widget si masqué pour montrer le chargement
+                if not self.widget.visible:
+                    self.widget.set_visible(True)
+                # Mettre le statut en "loading" avec clignotement orange IMMÉDIATEMENT
+                # Cela doit être fait AVANT tout autre appel qui pourrait changer le statut
+                self.widget.set_status("loading")
+                # Forcer la mise à jour de l'affichage pour que le clignotement orange commence immédiatement
+                self.widget.root.update()
+                # Lancer le chargement en arrière-plan après un court délai pour s'assurer que l'interface est prête
+                self.widget.root.after(500, self._load_whisper_model_at_startup)
+            else:
+                # Configuration GPU invalide, passer en erreur
+                print("[Application] [ERREUR] Configuration GPU invalide")
+                self.widget.set_status("error")
+                self._update_status()
         else:
             # Si on ne charge pas le modèle, mettre à jour le statut maintenant
             self._update_status()

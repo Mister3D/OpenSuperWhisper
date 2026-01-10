@@ -80,10 +80,44 @@ L'application s'exécute en arrière-plan avec un widget flottant visible. Utili
 
 Cliquez sur l'icône dans la zone de notification (System Tray) pour accéder à l'interface de configuration.
 
+## Installation automatique
+
+Pour une installation complète avec vérification des drivers NVIDIA:
+
+```bash
+python installer_setup.py
+```
+
+Ce script:
+- Vérifie la version de Python
+- Installe toutes les dépendances
+- Détecte un GPU NVIDIA et propose d'installer PyTorch avec CUDA
+
+## Vérification des drivers NVIDIA
+
+Pour vérifier si vos drivers NVIDIA sont installés:
+
+```bash
+python check_nvidia_drivers.py
+```
+
+Ce script vous guidera pour installer les drivers si nécessaire.
+
+## Build d'un exécutable Windows
+
+Pour créer un exécutable Windows (.exe):
+
+```bash
+python build_exe.py
+```
+
+Voir `BUILD_INSTRUCTIONS.md` pour les détails complets sur le build et la création d'un installateur.
+
 ## Fonctionnalités
 
 - Enregistrement audio au maintien d'un raccourci clavier
 - Transcription locale avec Whisper ou via API distante
+- Support GPU NVIDIA (CUDA) pour accélération
 - Insertion automatique du texte à l'emplacement du curseur
 - Widget flottant avec visualisation en temps réel
 - Interface de configuration intuitive

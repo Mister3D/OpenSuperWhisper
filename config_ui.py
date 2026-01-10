@@ -203,11 +203,15 @@ class ConfigWindow:
                 try:
                     import sys
                     if sys.platform == 'win32':
+                        # Sauvegarder le titre actuel avant d'appliquer le style
+                        current_title = self.root.title()
                         # Appliquer le style de barre de titre sombre si le thème est dark
                         if theme == "dark":
                             pywinstyles.apply_style(self.root, "dark")
                         else:
                             pywinstyles.apply_style(self.root, "light")
+                        # Restaurer le titre après l'application du style
+                        self.root.after(50, lambda: self.root.title(current_title))
                 except Exception as e:
                     print(f"[Configuration] Erreur lors de l'application du style de barre de titre: {e}")
         
@@ -1024,21 +1028,34 @@ class ConfigWindow:
             self.config.set("ui.language", new_lang)
             self.config.save()
 
-            # Mettre à jour le titre de la fenêtre
-            self.root.title(self.lang.get("window_title"))
+            # Mettre à jour le titre de la fenêtre immédiatement
+            new_title = self.lang.get("window_title")
+            self.root.title(new_title)
+            # Forcer la mise à jour de l'affichage
+            self.root.update_idletasks()
 
             # Recharger l'interface pour appliquer les nouvelles traductions
             self._reload_interface_texts()
 
             # Mettre à jour le bandeau d'information
             self._update_status_banner()
+            
+            # Réappliquer le titre après un court délai pour s'assurer qu'il n'est pas écrasé par pywinstyles
+            def reapply_title():
+                self.root.title(new_title)
+                self.root.update_idletasks()
+            
+            self.root.after(200, reapply_title)
 
             print(f"[Configuration] Langue changée vers: {new_lang}")
 
     def _reload_interface_texts(self):
         """Recharge tous les textes de l'interface après un changement de langue."""
         # Mettre à jour le titre de la fenêtre
-        self.root.title(self.lang.get("window_title"))
+        new_title = self.lang.get("window_title")
+        self.root.title(new_title)
+        # Forcer la mise à jour de l'affichage
+        self.root.update_idletasks()
         
         # Mettre à jour le label du raccourci clavier (conserver la police en gras)
         if hasattr(self, 'hotkey_title_label'):
