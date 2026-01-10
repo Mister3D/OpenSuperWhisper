@@ -1,4 +1,8 @@
 openai-whisper>=20231117
+# PyTorch sera installé automatiquement par openai-whisper (version CPU par défaut)
+# Pour utiliser le GPU, installez PyTorch avec CUDA après :
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# (Remplacez cu118 par votre version CUDA : cu121, cu118, etc.)
 sounddevice>=0.4.6
 soundfile>=0.12.1
 scipy>=1.10.0

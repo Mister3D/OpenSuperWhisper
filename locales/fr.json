@@ -7,6 +7,9 @@
   "whisper_model_frame": "Modèle Whisper (si mode Local)",
   "model_size_label": "Taille du modèle :",
   "model_note": "Note : Les modèles plus grands sont plus précis mais plus lents.",
+  "whisper_device_label": "Périphérique :",
+  "whisper_device_cpu": "CPU",
+  "whisper_device_gpu": "GPU (CUDA)",
   "processing_mode": "Mode de traitement",
   "local_whisper": "Local (Whisper)",
   "remote_api": "API distante",
@@ -27,7 +30,7 @@
   "refresh_button": "Actualiser",
   "test_mic_button": "Tester le microphone",
   "test_stop_button": "⏸ Arrêter le test",
-  "test_recording": "⏳ Enregistrement en cours... Cliquez sur 'Arrêter le test' pour arrêter.",
+  "test_recording": "Enregistrement en cours... Cliquez sur 'Arrêter le test' pour arrêter.",
   "test_recording_display": "Enregistrement en cours...",
   "test_error": "Erreur",
   "test_no_mic_selected": "[ERREUR] Aucun microphone sélectionné",
@@ -41,7 +44,7 @@
   "widget_position_reset": "Position du widget réinitialisée à (50, 50)",
   "transcription_progress": "Transcription en cours...",
   "close_button": "Fermer",
-  "status_loading": "⏳ Chargement du modèle Whisper en cours... Le widget clignote en orange pendant le chargement.",
+  "status_loading": "Chargement du modèle Whisper en cours... Le widget clignote en orange pendant le chargement.",
   "status_ok": "[OK] Configuration valide. L'application est prête à être utilisée.",
   "status_error_whisper_not_installed": "[ERREUR] Whisper n'est pas installé. Installez-le avec : pip install openai-whisper",
   "status_error_model_not_loaded_downloaded": "[ERREUR] Le modèle Whisper est téléchargé mais non chargé. Cliquez sur 'Charger le modèle' dans l'onglet Général.",
@@ -59,7 +62,5 @@
   "test_file_not_found": "Fichier de test non trouvé: {file}",
   "api_config_required": "Veuillez configurer l'URL et le token de l'API",
   "no_result": "Aucun résultat obtenu",
-  "transcription_error": "Erreur lors du test:\n{error}",
-  "transcription_progress": "Transcription en cours...",
-  "close_button": "Fermer"
+  "transcription_error": "Erreur lors du test:\n{error}"
 }

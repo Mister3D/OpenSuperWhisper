@@ -35,7 +35,8 @@ class Config:
             }
         },
         "whisper": {
-            "model": "base"  # tiny, base, small, medium, large
+            "model": "base",  # tiny, base, small, medium, large
+            "device": "cpu"  # "cpu" ou "cuda" (GPU)
         }
     }
     

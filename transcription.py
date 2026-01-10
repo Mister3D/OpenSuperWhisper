@@ -4,6 +4,7 @@ Module de transcription (mode local Whisper et mode API).
 import os
 import requests
 import numpy as np
+import warnings
 from typing import Optional
 from pathlib import Path
 
@@ -12,7 +13,8 @@ class TranscriptionService:
     """Service de transcription (local ou API)."""
     
     def __init__(self, mode: str = "api", api_url: Optional[str] = None, 
-                 api_token: Optional[str] = None, whisper_model: str = "base"):
+                 api_token: Optional[str] = None, whisper_model: str = "base", 
+                 whisper_device: str = "cpu"):
         """
         Initialise le service de transcription.
         
@@ -21,11 +23,13 @@ class TranscriptionService:
             api_url: URL de l'API (requis si mode="api")
             api_token: Token Bearer pour l'API (requis si mode="api")
             whisper_model: Modèle Whisper à utiliser (si mode="local")
+            whisper_device: "cpu" ou "cuda" pour le chargement du modèle (si mode="local")
         """
         self.mode = mode
         self.api_url = api_url
         self.api_token = api_token
         self.whisper_model = whisper_model
+        self.whisper_device = whisper_device
         self.whisper_model_obj = None
         self._loading_in_progress = False  # Flag pour indiquer qu'un chargement est en cours
     
@@ -51,6 +55,9 @@ class TranscriptionService:
         if self.mode != "local":
             print(f"[Whisper] Chargement annulé : le mode a changé vers '{self.mode}'")
             return False
+        
+        # Debug: afficher la configuration du device
+        print(f"[Whisper] Configuration device demandée: '{self.whisper_device}'")
         
         if not self.is_whisper_available():
             print("ERREUR: Whisper n'est pas disponible. Installez-le avec: pip install openai-whisper")
@@ -161,7 +168,34 @@ class TranscriptionService:
                             self._loading_in_progress = False
                             return False
                         
-                        self.whisper_model_obj = whisper.load_model(self.whisper_model)
+                        # Déterminer le device à utiliser
+                        device = self.whisper_device
+                        if device == "cuda":
+                            # Vérifier si CUDA est disponible
+                            try:
+                                import torch
+                                if torch.cuda.is_available():
+                                    device = "cuda"
+                                    gpu_name = torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else "GPU"
+                                    print(f"[Whisper] Utilisation du GPU (CUDA): {gpu_name}")
+                                else:
+                                    # Vérifier pourquoi CUDA n'est pas disponible
+                                    reason = "GPU non détecté ou drivers CUDA non installés"
+                                    try:
+                                        if torch.version.cuda is None:
+                                            reason = "PyTorch compilé sans support CUDA"
+                                    except:
+                                        pass
+                                    print(f"[Whisper] ⚠️ CUDA demandé mais non disponible ({reason}), utilisation du CPU")
+                                    device = "cpu"
+                            except ImportError:
+                                print(f"[Whisper] ⚠️ PyTorch non disponible, utilisation du CPU")
+                                device = "cpu"
+                        else:
+                            device = "cpu"
+                            print(f"[Whisper] Utilisation du CPU")
+                        
+                        self.whisper_model_obj = whisper.load_model(self.whisper_model, device=device)
                         
                         # Vérifier à nouveau après le chargement
                         if self.mode != "local":
@@ -179,9 +213,37 @@ class TranscriptionService:
                         print(f"[Whisper] Chargement annulé : le mode a changé vers '{self.mode}'")
                         return False
                     
+                    # Déterminer le device à utiliser
+                    device = self.whisper_device
+                    print(f"[Whisper] Device configuré lors du chargement: '{device}'")
+                    if device == "cuda":
+                        # Vérifier si CUDA est disponible
+                        try:
+                            import torch
+                            if torch.cuda.is_available():
+                                device = "cuda"
+                                gpu_name = torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else "GPU"
+                                print(f"[Whisper] Utilisation du GPU (CUDA): {gpu_name}")
+                            else:
+                                # Vérifier pourquoi CUDA n'est pas disponible
+                                reason = "GPU non détecté ou drivers CUDA non installés"
+                                try:
+                                    if torch.version.cuda is None:
+                                        reason = "PyTorch compilé sans support CUDA"
+                                except:
+                                    pass
+                                print(f"[Whisper] ⚠️ CUDA demandé mais non disponible ({reason}), utilisation du CPU")
+                                device = "cpu"
+                        except ImportError:
+                            print(f"[Whisper] ⚠️ PyTorch non disponible, utilisation du CPU")
+                            device = "cpu"
+                    else:
+                        device = "cpu"
+                        print(f"[Whisper] Utilisation du CPU")
+                    
                     self._loading_in_progress = True
                     try:
-                        self.whisper_model_obj = whisper.load_model(self.whisper_model)
+                        self.whisper_model_obj = whisper.load_model(self.whisper_model, device=device)
                         
                         # Vérifier à nouveau après le chargement
                         if self.mode != "local":
@@ -231,10 +293,50 @@ class TranscriptionService:
             
             print(f"[Whisper] Début de la transcription du fichier: {audio_file_path}")
             
-            # Charger l'audio avec soundfile au lieu d'utiliser ffmpeg
+            # Vérifier et forcer le device du modèle sur GPU si demandé
+            # C'est crucial car Whisper vérifie model.device dans transcribe() et peut utiliser CPU même si CUDA est disponible
+            if self.whisper_device == "cuda":
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        # Vérifier que les paramètres du modèle sont sur GPU
+                        model_device = next(self.whisper_model_obj.parameters()).device
+                        if model_device.type != "cuda":
+                            print(f"[Whisper] [WARNING] Les paramètres du modèle sont sur {model_device.type}, déplacement vers GPU...")
+                            self.whisper_model_obj = self.whisper_model_obj.to("cuda")
+                            model_device = next(self.whisper_model_obj.parameters()).device
+                            print(f"[Whisper] Paramètres déplacés sur GPU: {model_device}")
+                        
+                        # CRUCIAL: Vérifier et corriger model.device (Whisper utilise model.device pour décider du device)
+                        # Si model.device est CPU, Whisper utilisera CPU même si les paramètres sont sur GPU
+                        if hasattr(self.whisper_model_obj, 'device'):
+                            if self.whisper_model_obj.device.type != "cuda":
+                                print(f"[Whisper] [WARNING] model.device est {self.whisper_model_obj.device} (devrait être cuda), correction...")
+                                # Forcer le device du modèle - Whisper utilise model.device pour la détection
+                                # On doit s'assurer que model.device pointe vers cuda
+                                self.whisper_model_obj.device = torch.device("cuda")
+                                print(f"[Whisper] model.device corrigé: {self.whisper_model_obj.device}")
+                        else:
+                            # Si le modèle n'a pas d'attribut device, on doit le définir
+                            print(f"[Whisper] Le modèle n'a pas d'attribut device, définition...")
+                            self.whisper_model_obj.device = torch.device("cuda")
+                            print(f"[Whisper] model.device défini: {self.whisper_model_obj.device}")
+                        
+                        # Vérification finale
+                        final_device = next(self.whisper_model_obj.parameters()).device
+                        model_device_attr = getattr(self.whisper_model_obj, 'device', None)
+                        print(f"[Whisper] Vérification finale - Paramètres: {final_device}, model.device: {model_device_attr}")
+                except Exception as e:
+                    print(f"[Whisper] [WARNING] Impossible de vérifier/déplacer le modèle sur GPU: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # Charger l'audio avec soundfile (ffmpeg n'est pas nécessaire et peut ne pas être installé)
+            # Puis passer l'array numpy à transcribe() - maintenant que model.device est correctement défini,
+            # Whisper devrait utiliser le GPU
             try:
                 import soundfile as sf
-                import numpy as np
+                import torch
                 
                 # Charger l'audio
                 audio_data, sample_rate = sf.read(audio_file_path)
@@ -261,21 +363,58 @@ class TranscriptionService:
                 
                 print(f"[Whisper] Audio chargé: {len(audio_data)} échantillons à {sample_rate}Hz")
                 
-                # Transcrire directement avec les données audio
-                result = self.whisper_model_obj.transcribe(audio_data, language="fr")
+                # Déterminer si on doit utiliser FP16 (seulement sur GPU)
+                fp16 = False
+                if self.whisper_device == "cuda":
+                    try:
+                        if torch.cuda.is_available():
+                            model_device = next(self.whisper_model_obj.parameters()).device
+                            if model_device.type == "cuda":
+                                fp16 = True
+                                print(f"[Whisper] Utilisation de FP16 sur GPU pour une meilleure performance")
+                    except:
+                        pass
+                
+                # Transcrire avec l'array numpy - maintenant que model.device est correctement défini,
+                # Whisper devrait utiliser le GPU automatiquement
+                print(f"[Whisper] Transcription avec array numpy (modèle sur GPU)...")
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
+                    result = self.whisper_model_obj.transcribe(
+                        audio_data, 
+                        language="fr",
+                        fp16=fp16
+                    )
                 text = result.get("text", "").strip()
                 
             except ImportError:
-                # Fallback: essayer avec ffmpeg si soundfile n'est pas disponible
-                print("[Whisper] soundfile non disponible, tentative avec ffmpeg...")
-                result = self.whisper_model_obj.transcribe(audio_file_path, language="fr")
-                text = result.get("text", "").strip()
+                # Fallback: essayer avec le chemin du fichier si soundfile n'est pas disponible
+                # (nécessite ffmpeg installé)
+                print("[Whisper] soundfile non disponible, utilisation directe du fichier (nécessite ffmpeg)...")
+                try:
+                    fp16 = False
+                    if self.whisper_device == "cuda":
+                        try:
+                            import torch
+                            if torch.cuda.is_available():
+                                model_device = next(self.whisper_model_obj.parameters()).device
+                                if model_device.type == "cuda":
+                                    fp16 = True
+                        except:
+                            pass
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
+                        result = self.whisper_model_obj.transcribe(audio_file_path, language="fr", fp16=fp16)
+                    text = result.get("text", "").strip()
+                except Exception as e:
+                    print(f"[Whisper] Erreur lors de la transcription avec le fichier: {e}")
+                    print("[Whisper] [ERREUR] ffmpeg n'est pas installé. Installez ffmpeg ou utilisez soundfile.")
+                    return None
             except Exception as e:
                 print(f"[Whisper] Erreur lors du chargement de l'audio avec soundfile: {e}")
-                # Fallback: essayer avec ffmpeg
-                print("[Whisper] Tentative avec ffmpeg...")
-                result = self.whisper_model_obj.transcribe(audio_file_path, language="fr")
-                text = result.get("text", "").strip()
+                import traceback
+                traceback.print_exc()
+                return None
             
             print(f"[Whisper] Transcription terminée: '{text[:50]}...' (longueur: {len(text)})")
             return text if text else None

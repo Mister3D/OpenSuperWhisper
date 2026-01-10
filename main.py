@@ -77,11 +77,13 @@ class OpenSuperWhisperApp:
         api_url = self.config.get("api.url")
         api_token = self.config.get("api.token")
         whisper_model = self.config.get("whisper.model", "base")
+        whisper_device = self.config.get("whisper.device", "cpu")
         self.transcription_service = TranscriptionService(
             mode=mode,
             api_url=api_url,
             api_token=api_token,
-            whisper_model=whisper_model
+            whisper_model=whisper_model,
+            whisper_device=whisper_device
         )
         
         # Configurer le raccourci clavier
@@ -481,11 +483,13 @@ class OpenSuperWhisperApp:
                         # On peut aussi réinitialiser le flag
                         self.transcription_service._loading_in_progress = False
             
+            whisper_device = self.config.get("whisper.device", "cpu")
             self.transcription_service = TranscriptionService(
                 mode=mode,
                 api_url=api_url,
                 api_token=api_token,
-                whisper_model=whisper_model
+                whisper_model=whisper_model,
+                whisper_device=whisper_device
             )
             # Ne pas charger le modèle ici - il sera chargé à la demande lors de la transcription
             # Cela évite de freeze l'interface lors de la sauvegarde de la configuration

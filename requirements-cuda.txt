@@ -1,0 +1,29 @@
+# Requirements avec PyTorch CUDA pour GPU
+# Utilisez ce fichier si vous avez un GPU NVIDIA et souhaitez utiliser CUDA
+# 
+# IMPORTANT : Vérifiez d'abord votre version CUDA avec : nvidia-smi
+# Pour Python 3.13+, utilisez le script install_cuda.py qui essaiera automatiquement
+# les builds nightly si les builds stables ne sont pas disponibles
+
+# PyTorch avec support CUDA 12.8 (compatible avec CUDA 13.0 et supporte Python 3.13+)
+# Le script install_cuda.py essaiera automatiquement les bonnes versions
+# Si vous installez manuellement, utilisez:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+# Pour Python 3.13+, cu128 est recommandé (support officiel)
+
+# Autres dépendances
+openai-whisper>=20231117
+sounddevice>=0.4.6
+soundfile>=0.12.1
+scipy>=1.10.0
+numpy>=1.24.0
+pynput>=1.7.6
+pystray>=0.19.5
+Pillow>=10.0.0
+requests>=2.31.0
+pyperclip>=1.8.2
+pywin32>=306; sys_platform == 'win32'
+sv-ttk>=2.6.0
+darkdetect>=0.8.0
+pywinstyles>=1.8; sys_platform == 'win32'
+cairosvg>=2.7.0

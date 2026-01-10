@@ -7,6 +7,9 @@
   "whisper_model_frame": "Whisper Model (if Local mode)",
   "model_size_label": "Model size:",
   "model_note": "Note: Larger models are more accurate but slower.",
+  "whisper_device_label": "Device:",
+  "whisper_device_cpu": "CPU",
+  "whisper_device_gpu": "GPU (CUDA)",
   "processing_mode": "Processing mode",
   "local_whisper": "Local (Whisper)",
   "remote_api": "Remote API",
@@ -27,7 +30,7 @@
   "refresh_button": "Refresh",
   "test_mic_button": "Test microphone",
   "test_stop_button": "⏸ Stop test",
-  "test_recording": "⏳ Recording in progress... Click 'Stop test' to stop.",
+  "test_recording": "Recording in progress... Click 'Stop test' to stop.",
   "test_recording_display": "Recording in progress...",
   "test_error": "Error",
   "test_no_mic_selected": "[ERROR] No microphone selected",
@@ -41,7 +44,7 @@
   "widget_position_reset": "Widget position reset to (50, 50)",
   "transcription_progress": "Transcription in progress...",
   "close_button": "Close",
-  "status_loading": "⏳ Loading Whisper model... The widget blinks orange during loading.",
+  "status_loading": "Loading Whisper model... The widget blinks orange during loading.",
   "status_ok": "[OK] Configuration valid. The application is ready to use.",
   "status_error_whisper_not_installed": "[ERROR] Whisper is not installed. Install it with: pip install openai-whisper",
   "status_error_model_not_loaded_downloaded": "[ERROR] The Whisper model is downloaded but not loaded. Click 'Load model' in the General tab.",
@@ -59,7 +62,5 @@
   "test_file_not_found": "Test file not found: {file}",
   "api_config_required": "Please configure API URL and token",
   "no_result": "No result obtained",
-  "transcription_error": "Error during test:\n{error}",
-  "transcription_progress": "Transcription in progress...",
-  "close_button": "Close"
+  "transcription_error": "Error during test:\n{error}"
 }

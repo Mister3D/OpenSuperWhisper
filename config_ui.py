@@ -158,6 +158,7 @@ class ConfigWindow:
         
         self.widget_visible_var = tk.BooleanVar(value=widget_visible)
         self.whisper_model_var = tk.StringVar(value=self.config.get("whisper.model", "base"))
+        self.whisper_device_var = tk.StringVar(value=self.config.get("whisper.device", "cpu"))
         self.use_default_mic_var = tk.BooleanVar(value=use_default_mic)
         self.selected_device_var = tk.StringVar()
         self.device_map = {}
@@ -348,6 +349,7 @@ class ConfigWindow:
         
         self.widget_visible_var.set(widget_visible)
         self.whisper_model_var.set(self.config.get("whisper.model", "base"))
+        self.whisper_device_var.set(self.config.get("whisper.device", "cpu"))
         self.use_default_mic_var.set(use_default_mic)
 
         # Recharger la langue
@@ -778,6 +780,35 @@ class ConfigWindow:
         model_combo.pack(side=tk.LEFT, padx=(0, 10))
         model_combo.bind('<<ComboboxSelected>>', lambda e: [self._auto_save(), self._on_model_changed()])
         
+        # Frame pour l'option CPU/GPU
+        device_row = ttk.Frame(self.whisper_frame)
+        device_row.pack(fill=tk.X, pady=(10, 2))
+        
+        self.device_label = ttk.Label(device_row, text=self.lang.get("whisper_device_label"))
+        self.device_label.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Radio buttons pour CPU/GPU
+        device_frame = ttk.Frame(device_row)
+        device_frame.pack(side=tk.LEFT)
+        
+        self.cpu_radio = ttk.Radiobutton(
+            device_frame,
+            text=self.lang.get("whisper_device_cpu"),
+            variable=self.whisper_device_var,
+            value="cpu",
+            command=lambda: [self._auto_save(), self._on_device_changed()]
+        )
+        self.cpu_radio.pack(side=tk.LEFT, padx=(0, 15))
+        
+        self.gpu_radio = ttk.Radiobutton(
+            device_frame,
+            text=self.lang.get("whisper_device_gpu"),
+            variable=self.whisper_device_var,
+            value="cuda",
+            command=lambda: [self._auto_save(), self._on_device_changed()]
+        )
+        self.gpu_radio.pack(side=tk.LEFT)
+        
         # Bouton pour charger le modèle à côté du combobox
         self.load_model_button = ttk.Button(
             model_size_row,
@@ -1205,7 +1236,11 @@ class ConfigWindow:
     def _check_whisper(self):
         """Vérifie la disponibilité de Whisper (sans charger le modèle)."""
         print("[Configuration] Vérification de Whisper...")
-        service = TranscriptionService(mode="local", whisper_model=self.whisper_model_var.get())
+        service = TranscriptionService(
+            mode="local", 
+            whisper_model=self.whisper_model_var.get(),
+            whisper_device=self.whisper_device_var.get()
+        )
         is_available = service.is_whisper_available()
         
         if is_available:
@@ -1238,7 +1273,11 @@ class ConfigWindow:
             return
         
         # Vérifier d'abord si Whisper est disponible
-        service = TranscriptionService(mode="local", whisper_model=self.whisper_model_var.get())
+        service = TranscriptionService(
+            mode="local", 
+            whisper_model=self.whisper_model_var.get(),
+            whisper_device=self.whisper_device_var.get()
+        )
         if not service.is_whisper_available():
             self.whisper_status_label.config(
                 text=self.lang.get("status_error_whisper_not_installed"),
@@ -1300,7 +1339,11 @@ class ConfigWindow:
                     success = service.load_whisper_model(progress_callback=progress_callback)
                 else:
                     # Créer un nouveau service pour le test
-                    service = TranscriptionService(mode="local", whisper_model=model_name)
+                    service = TranscriptionService(
+                        mode="local", 
+                        whisper_model=model_name,
+                        whisper_device=self.whisper_device_var.get()
+                    )
                     
                     # Callback pour mettre à jour l'interface avec la progression
                     def progress_callback(message):
@@ -1317,6 +1360,7 @@ class ConfigWindow:
                         # Vérifier que le mode est toujours "local" avant de mettre à jour
                         if self.app_instance.transcription_service.mode == "local":
                             self.app_instance.transcription_service.whisper_model = model_name
+                            self.app_instance.transcription_service.whisper_device = self.whisper_device_var.get()
                             self.app_instance.transcription_service.whisper_model_obj = service.whisper_model_obj
                         else:
                             print(f"[Configuration] Chargement terminé mais le mode a changé vers '{self.app_instance.transcription_service.mode}'")
@@ -1414,6 +1458,24 @@ class ConfigWindow:
             self._update_load_model_button()
             # Ne pas charger automatiquement, l'utilisateur doit cliquer sur le bouton
     
+    def _on_device_changed(self):
+        """Appelé quand le device (CPU/GPU) change."""
+        # Si un chargement est en cours, l'arrêter
+        if self._model_loading_in_progress:
+            print("[Configuration] Arrêt du chargement : changement de device")
+            self._model_loading_in_progress = False
+            if hasattr(self, 'load_model_button'):
+                self.load_model_button.config(text="❌ Charger le modèle", state="normal")
+        
+        # Mettre à jour l'état du bouton (le modèle doit être rechargé avec le nouveau device)
+        if self.mode_var.get() == "local":
+            # Réinitialiser le modèle dans le service de l'application
+            if self.app_instance and self.app_instance.transcription_service:
+                self.app_instance.transcription_service.whisper_model_obj = None
+                self.app_instance.transcription_service.whisper_device = self.whisper_device_var.get()
+            self._update_load_model_button()
+            # Ne pas charger automatiquement, l'utilisateur doit cliquer sur le bouton
+    
     def _test_with_file(self):
         """Teste la transcription avec le fichier alexa_ciel.wav."""
         from pathlib import Path
@@ -1439,7 +1501,12 @@ class ConfigWindow:
         else:
             # Mode local
             whisper_model = self.whisper_model_var.get()
-            service = TranscriptionService(mode="local", whisper_model=whisper_model)
+            whisper_device = self.whisper_device_var.get()
+            service = TranscriptionService(
+                mode="local", 
+                whisper_model=whisper_model,
+                whisper_device=whisper_device
+            )
             result_label = self.test_result_label if hasattr(self, 'test_result_label') else None
         
         # Afficher un message de progression dans le label
@@ -1589,6 +1656,7 @@ class ConfigWindow:
         
         # Sauvegarder la configuration Whisper
         self.config.set("whisper.model", self.whisper_model_var.get())
+        self.config.set("whisper.device", self.whisper_device_var.get())
         
         # Sauvegarder la visibilité du widget
         self.config.set("widget.visible", self.widget_visible_var.get())

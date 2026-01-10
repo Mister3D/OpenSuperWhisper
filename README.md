@@ -34,9 +34,29 @@ Application de transcription vocale (Speech-to-Text) permettant une utilisation 
    ```
 
 4. Installer les dépendances :
-```bash
-pip install -r requirements.txt
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+5. **Installation automatique de PyTorch avec CUDA** (optionnel, pour GPU) :
+   ```bash
+   python install_cuda.py
+   ```
+   
+   Ce script :
+   - ✅ Détecte automatiquement votre version CUDA (via `nvidia-smi` ou `nvcc`)
+   - ✅ Installe la bonne version de PyTorch avec support CUDA
+   - ✅ Vérifie que l'installation fonctionne correctement
+   - ✅ Bascule automatiquement sur CPU si aucun GPU n'est détecté
+   
+   **Alternative manuelle** (si vous préférez) :
+   ```bash
+   # D'abord, vérifiez votre version CUDA : nvidia-smi
+   # Puis modifiez requirements-cuda.txt avec la bonne version CUDA (cu118, cu121, etc.)
+   pip install -r requirements-cuda.txt
+   ```
+
+**Note** : Si vous n'avez pas de GPU NVIDIA, le script installera automatiquement PyTorch en version CPU.
 
 ## Utilisation
 
