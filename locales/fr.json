@@ -62,5 +62,18 @@
   "test_file_not_found": "Fichier de test non trouvé: {file}",
   "api_config_required": "Veuillez configurer l'URL et le token de l'API",
   "no_result": "Aucun résultat obtenu",
-  "transcription_error": "Erreur lors du test:\n{error}"
+  "transcription_error": "Erreur lors du test:\n{error}",
+  "startup_checkbox": "Lancer l'application au démarrage de Windows",
+  "startup_enabled": "Démarrage automatique activé",
+  "startup_disabled": "Démarrage automatique désactivé",
+  "keywords_config_title": "Mots-clés et remplacements",
+  "keywords_description": "Configurez des mots-clés qui seront remplacés automatiquement dans le texte transcrit. Par exemple, si vous dites 'POINT', il sera remplacé par '.'",
+  "keyword_label": "Mot-clé :",
+  "replacement_label": "Remplacement :",
+  "add_keyword_button": "Ajouter",
+  "delete_keyword_button": "Supprimer",
+  "keywords_table_title": "Mots-clés configurés",
+  "keyword_column": "Mot-clé",
+  "replacement_column": "Remplacement",
+  "no_keywords": "Aucun mot-clé configuré"
 }

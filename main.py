@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 import signal
+import tkinter as tk
 from pathlib import Path
 from pynput import keyboard
 from pynput.keyboard import Key, Listener
@@ -26,6 +27,9 @@ class OpenSuperWhisperApp:
         """Initialise l'application."""
         # Initialiser la configuration en premier (nécessaire pour les autres méthodes)
         self.config = Config()
+        
+        # Synchroniser le démarrage automatique avec le registre Windows
+        self._sync_startup_setting()
         
         # S'assurer que le cache Whisper est accessible
         self._ensure_whisper_cache()
@@ -57,6 +61,8 @@ class OpenSuperWhisperApp:
         self.audio_feedback = AudioFeedback()
         self.transcription_service = None
         self.text_inserter = TextInserter()
+        # Initialiser le processeur de texte (sera configuré dans _initialize_components)
+        self.text_processor = None
         
         self.is_recording = False
         self.hotkey_listener = None
@@ -149,6 +155,11 @@ class OpenSuperWhisperApp:
             whisper_model=whisper_model,
             whisper_device=whisper_device
         )
+        
+        # Processeur de texte intelligent
+        from text_processor import TextProcessor
+        keywords = self.config.get("text_processing.keywords", {})
+        self.text_processor = TextProcessor(keywords=keywords)
         
         # Configurer le raccourci clavier
         self._setup_hotkey()
@@ -426,8 +437,11 @@ class OpenSuperWhisperApp:
                     pass
             
             if text:
-                # Insérer le texte
-                success = self.text_inserter.insert_text_smart(text)
+                # Traiter le texte avec le processeur intelligent
+                processed_text = self.text_processor.process(text)
+                
+                # Insérer le texte traité
+                success = self.text_inserter.insert_text_smart(processed_text)
                 
                 if success:
                     self.widget.root.after(0, lambda: self.widget.set_status("ok"))
@@ -451,25 +465,59 @@ class OpenSuperWhisperApp:
     
     def _update_status(self):
         """Met à jour le statut de l'application."""
-        # Vérifier la configuration SANS charger le modèle (pour éviter le freeze au démarrage)
-        # Le modèle sera chargé automatiquement lors de la première transcription
+        # Vérifier d'abord si le modèle est chargé, même si le statut est "loading"
+        # car validate_configuration peut charger le modèle de manière synchrone
+        if (self.transcription_service.mode == "local" and 
+            self.transcription_service.is_model_loaded()):
+            # Le modèle est chargé, mettre à jour le statut
+            self.widget.root.after(0, lambda: self.widget.set_status("ok"))
+            self.system_tray.set_status("idle")
+            # Mettre à jour le bandeau d'information dans la fenêtre de configuration si elle est ouverte
+            if hasattr(self, '_config_window') and self._config_window:
+                self.widget.root.after(0, self._config_window._update_status_banner)
+            return
+        
+        # Ne pas mettre à jour le statut si on est en train de charger (et le modèle n'est pas encore chargé)
+        if self.widget.status == "loading":
+            return
+        
+        # Vérifier si un chargement est en cours pour éviter les appels multiples
+        if (hasattr(self.transcription_service, '_loading_in_progress') and 
+            self.transcription_service._loading_in_progress):
+            return  # Ne pas appeler validate_configuration si un chargement est déjà en cours
+        
+        # Si le modèle n'est pas chargé, vérifier la configuration
+        # validate_configuration peut maintenant charger le modèle automatiquement
         is_valid, error = self.transcription_service.validate_configuration(load_model=False)
         
         if is_valid:
-            # Ne pas changer le statut si on est en train de charger (loading)
-            if self.widget.status != "loading":
+            # Vérifier si le modèle a été chargé par validate_configuration
+            if (self.transcription_service.mode == "local" and 
+                self.transcription_service.is_model_loaded()):
+                # Le modèle vient d'être chargé, mettre à jour le statut
                 self.widget.root.after(0, lambda: self.widget.set_status("ok"))
-            self.system_tray.set_status("idle")
+                self.system_tray.set_status("idle")
+                # Mettre à jour le bandeau d'information dans la fenêtre de configuration si elle est ouverte
+                if hasattr(self, '_config_window') and self._config_window:
+                    self.widget.root.after(0, self._config_window._update_status_banner)
+            elif self.transcription_service.mode == "local":
+                # Le modèle n'est pas encore chargé, le chargement est en cours ou va se faire
+                # Ne pas mettre en erreur si le chargement est prévu
+                pass
+            else:
+                self.widget.root.after(0, lambda: self.widget.set_status("ok"))
+                self.system_tray.set_status("idle")
         else:
-            # Ne pas changer le statut si on est en train de charger (loading)
-            if self.widget.status != "loading":
-                self.widget.root.after(0, lambda: self.widget.set_status("error"))
+            self.widget.root.after(0, lambda: self.widget.set_status("error"))
             self.system_tray.set_status("error")
             print(f"Configuration invalide: {error}")
     
     def _load_whisper_model_at_startup(self):
         """Charge le modèle Whisper au démarrage en arrière-plan (GPU si configuré)."""
         import threading
+        
+        # Note: Le mécanisme global_event_processor dans run() s'occupe déjà
+        # de forcer Tkinter à traiter les événements pendant le chargement
         
         def load_thread():
             """Charge le modèle dans un thread séparé."""
@@ -517,6 +565,14 @@ class OpenSuperWhisperApp:
                                     print(f"[Application] [WARNING] Modèle chargé mais sur {model_device.type} au lieu de GPU")
                         except:
                             pass
+                    
+                    # Sauvegarder la configuration seulement si le chargement réussit
+                    try:
+                        self.config.save()
+                        print("[Application] Configuration sauvegardée après chargement réussi du modèle")
+                    except Exception as e:
+                        print(f"[Application] [WARNING] Erreur lors de la sauvegarde de la configuration: {e}")
+                    
                     self.widget.root.after(0, lambda: self.widget.set_status("ok"))
                     self.widget.root.after(0, self._update_status)
                     print("[Application] [OK] Modèle Whisper chargé avec succès au démarrage")
@@ -598,11 +654,18 @@ class OpenSuperWhisperApp:
             # Ne pas charger le modèle ici - il sera chargé à la demande lors de la transcription
             # Cela évite de freeze l'interface lors de la sauvegarde de la configuration
             
+            # Mettre à jour le processeur de texte avec les nouveaux mots-clés
+            if self.text_processor:
+                keywords = self.config.get("text_processing.keywords", {})
+                self.text_processor.update_keywords(keywords)
+            
             # Reconfigurer le raccourci clavier
             self._setup_hotkey()
             
-            # Mettre à jour le statut
-            self._update_status()
+            # Ne pas mettre à jour le statut depuis la fenêtre de configuration
+            # car cela déclencherait validate_configuration qui chargerait le modèle en boucle
+            # Le statut sera mis à jour automatiquement après le chargement du modèle ou lors de la fermeture de la fenêtre
+            # self._update_status()  # Désactivé pour éviter les chargements en boucle
         
         def on_window_close():
             # Arrêter le test du microphone si actif
@@ -622,11 +685,43 @@ class OpenSuperWhisperApp:
             
             # Nettoyer la référence quand la fenêtre est fermée
             self._config_window = None
+            
+            # Mettre à jour le statut après la fermeture de la fenêtre de configuration
+            # pour s'assurer que tout est à jour
+            self._update_status()
         
         self._config_window = ConfigWindow(self.config, on_save=on_config_saved, app_instance=self)
         # Intercepter la fermeture de la fenêtre
         self._config_window.root.protocol("WM_DELETE_WINDOW", on_window_close)
         self._config_window.show()
+    
+    def _sync_startup_setting(self):
+        """Synchronise le paramètre de démarrage automatique avec le registre Windows."""
+        try:
+            from startup_manager import is_startup_enabled, set_startup
+            config_enabled = self.config.get("startup.enabled", False)
+            registry_enabled = is_startup_enabled()
+            
+            # Si la configuration et le registre ne correspondent pas, synchroniser
+            if config_enabled != registry_enabled:
+                print(f"[Application] Synchronisation du démarrage automatique: config={config_enabled}, registre={registry_enabled}")
+                set_startup(config_enabled)
+        except Exception as e:
+            print(f"[Application] Erreur lors de la synchronisation du démarrage automatique: {e}")
+    
+    def _sync_startup_setting(self):
+        """Synchronise le paramètre de démarrage automatique avec le registre Windows."""
+        try:
+            from startup_manager import is_startup_enabled, set_startup
+            config_enabled = self.config.get("startup.enabled", False)
+            registry_enabled = is_startup_enabled()
+            
+            # Si la configuration et le registre ne correspondent pas, synchroniser
+            if config_enabled != registry_enabled:
+                print(f"[Application] Synchronisation du démarrage automatique: config={config_enabled}, registre={registry_enabled}")
+                set_startup(config_enabled)
+        except Exception as e:
+            print(f"[Application] Erreur lors de la synchronisation du démarrage automatique: {e}")
     
     def _quit_application(self):
         """Quitte l'application."""
@@ -714,46 +809,78 @@ class OpenSuperWhisperApp:
         # Démarrer le timer du widget
         self.widget._update_timer()
         
+        # Créer un mécanisme global pour forcer Tkinter à traiter les événements
+        # pendant les opérations longues (comme le chargement du modèle)
+        # Cela est nécessaire car whisper.load_model() peut bloquer le GIL même dans un thread
+        def global_event_processor():
+            """Force Tkinter à traiter les événements en attente de manière périodique."""
+            try:
+                # Vérifier si un chargement est en cours
+                loading = (hasattr(self.transcription_service, '_loading_in_progress') and 
+                          self.transcription_service._loading_in_progress)
+                
+                if loading:
+                    # Pendant un chargement, forcer le traitement des événements plus fréquemment
+                    self.widget.root.update()
+                    # Programmer le prochain appel très rapidement pour maintenir la réactivité
+                    self.widget.root.after(10, global_event_processor)
+                else:
+                    # Pas de chargement, vérifier moins fréquemment (toutes les 100ms)
+                    # pour ne pas surcharger le système
+                    self.widget.root.after(100, global_event_processor)
+            except tk.TclError:
+                # La fenêtre a été fermée, arrêter
+                pass
+            except Exception:
+                # Autre erreur, continuer quand même
+                try:
+                    self.widget.root.after(100, global_event_processor)
+                except:
+                    pass
+        
+        # Démarrer le traitement périodique des événements
+        self.widget.root.after(100, global_event_processor)
+        
         # Vérifier si on doit charger le modèle Whisper au démarrage
-        # (en mode local, précharger automatiquement le modèle en GPU si la configuration est bonne)
+        # (en mode local, charger automatiquement le modèle si la configuration est bonne)
         if (self.transcription_service.mode == "local" and 
             not self.transcription_service.is_model_loaded() and
             self.transcription_service.is_whisper_available()):
-            # Vérifier si la configuration GPU est valide avant de précharger
+            # Vérifier si la configuration est valide avant de charger
             device = self.transcription_service.whisper_device
-            should_preload = True
+            should_load = True
             
             if device == "cuda":
                 try:
                     import torch
                     if not torch.cuda.is_available():
-                        print("[Application] [WARNING] GPU CUDA demandé mais non disponible, pas de préchargement")
-                        should_preload = False
+                        print("[Application] [ERREUR] GPU CUDA demandé mais non disponible")
+                        should_load = False
                     else:
                         gpu_name = torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else "GPU"
-                        print(f"[Application] GPU CUDA disponible: {gpu_name}, préchargement du modèle en GPU...")
+                        print(f"[Application] GPU CUDA disponible: {gpu_name}, chargement du modèle en GPU...")
                 except ImportError:
-                    print("[Application] [WARNING] PyTorch non disponible, pas de préchargement GPU")
-                    should_preload = False
+                    print("[Application] [ERREUR] PyTorch non disponible pour le GPU")
+                    should_load = False
                 except Exception as e:
-                    print(f"[Application] [WARNING] Erreur lors de la vérification GPU: {e}, pas de préchargement")
-                    should_preload = False
+                    print(f"[Application] [ERREUR] Erreur lors de la vérification GPU: {e}")
+                    should_load = False
             
-            if should_preload:
-                print("[Application] Mode local activé, préchargement du modèle Whisper en arrière-plan...")
-                # Afficher le widget si masqué pour montrer le chargement
-                if not self.widget.visible:
-                    self.widget.set_visible(True)
+            if should_load:
+                print("[Application] Mode local activé, chargement automatique du modèle Whisper...")
                 # Mettre le statut en "loading" avec clignotement orange IMMÉDIATEMENT
                 # Cela doit être fait AVANT tout autre appel qui pourrait changer le statut
+                # Ne pas forcer l'affichage du widget - respecter la configuration de l'utilisateur
                 self.widget.set_status("loading")
                 # Forcer la mise à jour de l'affichage pour que le clignotement orange commence immédiatement
-                self.widget.root.update()
+                # (seulement si le widget est visible)
+                if self.widget.visible:
+                    self.widget.root.update()
                 # Lancer le chargement en arrière-plan après un court délai pour s'assurer que l'interface est prête
                 self.widget.root.after(500, self._load_whisper_model_at_startup)
             else:
-                # Configuration GPU invalide, passer en erreur
-                print("[Application] [ERREUR] Configuration GPU invalide")
+                # Configuration invalide, passer en erreur
+                print("[Application] [ERREUR] Configuration invalide")
                 self.widget.set_status("error")
                 self._update_status()
         else:

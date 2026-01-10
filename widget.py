@@ -87,6 +87,10 @@ class FloatingWidget:
         self.on_position_changed: Optional[Callable[[int, int], None]] = None
         self.on_click: Optional[Callable[[], None]] = None
         
+        # Appliquer la visibilité initiale
+        if not self.visible:
+            self.root.withdraw()
+        
         # Mise à jour
         self._update_display()
     

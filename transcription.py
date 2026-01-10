@@ -5,6 +5,7 @@ import os
 import requests
 import numpy as np
 import warnings
+import time
 from typing import Optional
 from pathlib import Path
 
@@ -32,6 +33,7 @@ class TranscriptionService:
         self.whisper_device = whisper_device
         self.whisper_model_obj = None
         self._loading_in_progress = False  # Flag pour indiquer qu'un chargement est en cours
+        self._last_load_attempt_time = None  # Timestamp de la dernière tentative de chargement
     
     def is_whisper_available(self) -> bool:
         """Vérifie si Whisper est disponible."""
@@ -605,11 +607,23 @@ class TranscriptionService:
                 if self.is_model_loaded():
                     print("[Whisper] [OK] Whisper est disponible et le modele est charge")
                     return (True, "")
+                # Vérifier si un chargement est déjà en cours
+                elif hasattr(self, '_loading_in_progress') and self._loading_in_progress:
+                    print("[Whisper] [INFO] Le modèle est déjà en cours de chargement, attente...")
+                    return (True, "")  # Retourner True car le chargement est en cours
+                # Vérifier si une tentative de chargement a été faite récemment (dans les 5 dernières secondes)
+                elif (hasattr(self, '_last_load_attempt_time') and 
+                      self._last_load_attempt_time is not None and
+                      time.time() - self._last_load_attempt_time < 5):
+                    print("[Whisper] [INFO] Une tentative de chargement a été faite récemment, attente...")
+                    return (True, "")  # Retourner True pour éviter les tentatives multiples
                 else:
-                    # En mode local, le modèle sera chargé automatiquement lors de la première transcription
-                    # Ne pas considérer cela comme une erreur si Whisper est disponible
-                    print("[Whisper] [WARNING] Whisper est disponible mais le modele n'est pas charge (sera charge automatiquement)")
-                    return (True, "")  # Retourner True car le modèle peut être chargé à la demande
+                    # Ne PAS charger automatiquement le modèle depuis validate_configuration
+                    # car cela peut bloquer l'UI même dans un thread
+                    # Le modèle sera chargé automatiquement lors de la première transcription
+                    # ou par _load_whisper_model_at_startup dans main.py
+                    print("[Whisper] [INFO] Whisper est disponible, le modèle sera chargé automatiquement lors de la première utilisation")
+                    return (True, "")
             
         elif self.mode == "api":
             if not self.api_url:

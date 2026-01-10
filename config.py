@@ -37,6 +37,12 @@ class Config:
         "whisper": {
             "model": "base",  # tiny, base, small, medium, large
             "device": "cpu"  # "cpu" ou "cuda" (GPU)
+        },
+        "startup": {
+            "enabled": False  # Démarrer l'application au démarrage de Windows
+        },
+        "text_processing": {
+            "keywords": {}  # Dictionnaire de mots-clés et leurs remplacements (ex: {"POINT": "."})
         }
     }
     

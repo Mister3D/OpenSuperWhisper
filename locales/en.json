@@ -62,5 +62,18 @@
   "test_file_not_found": "Test file not found: {file}",
   "api_config_required": "Please configure API URL and token",
   "no_result": "No result obtained",
-  "transcription_error": "Error during test:\n{error}"
+  "transcription_error": "Error during test:\n{error}",
+  "startup_checkbox": "Launch application at Windows startup",
+  "startup_enabled": "Startup enabled",
+  "startup_disabled": "Startup disabled",
+  "keywords_config_title": "Keywords and replacements",
+  "keywords_description": "Configure keywords that will be automatically replaced in transcribed text. For example, if you say 'POINT', it will be replaced by '.'",
+  "keyword_label": "Keyword:",
+  "replacement_label": "Replacement:",
+  "add_keyword_button": "Add",
+  "delete_keyword_button": "Delete",
+  "keywords_table_title": "Configured keywords",
+  "keyword_column": "Keyword",
+  "replacement_column": "Replacement",
+  "no_keywords": "No keywords configured"
 }

@@ -163,6 +163,11 @@ class ConfigWindow:
         self.selected_device_var = tk.StringVar()
         self.device_map = {}
         self.language_var = tk.StringVar(value=self.lang.current_lang)
+        # Variable pour le démarrage automatique
+        startup_enabled = self.config.get("startup.enabled", False)
+        if not isinstance(startup_enabled, bool):
+            startup_enabled = bool(startup_enabled)
+        self.startup_enabled_var = tk.BooleanVar(value=startup_enabled)
         
         print(f"[Configuration] Initialisation - widget_visible={widget_visible} (type: {type(widget_visible)}), use_default_mic={use_default_mic} (type: {type(use_default_mic)})")
         
@@ -366,6 +371,11 @@ class ConfigWindow:
                 self.language_display_var.set(self.language_code_to_display.get(saved_language, saved_language.upper()))
         
         print(f"[Configuration] Rechargement - widget_visible={widget_visible} (type: {type(widget_visible)}), use_default_mic={use_default_mic} (type: {type(use_default_mic)})")
+        
+        # Mettre à jour le tableau des modèles Whisper
+        if hasattr(self, 'model_table_widgets'):
+            self._update_whisper_model_table()
+            self._update_load_model_button()
         
         # Charger le nom du périphérique sélectionné si configuré
         device_index = self.config.get("audio.device_index")
@@ -635,6 +645,11 @@ class ConfigWindow:
         # Séparateur entre les sections
         ttk.Separator(self.scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=20, padx=10)
 
+        self._create_keywords_tab(self.scrollable_frame)
+
+        # Séparateur entre les sections
+        ttk.Separator(self.scrollable_frame, orient='horizontal').pack(fill=tk.X, pady=20, padx=10)
+
         self._create_processing_mode_section(self.scrollable_frame)
 
         # Pas de boutons - sauvegarde automatique
@@ -707,6 +722,19 @@ class ConfigWindow:
             print(f"Erreur lors du chargement de l'icône: {e}")
         return None
     
+    def _load_trash_icon(self):
+        """Charge l'icône de poubelle et retourne l'image ou None."""
+        try:
+            svg_path = os.path.join(os.path.dirname(__file__), "trash.svg")
+            if os.path.exists(svg_path) and HAS_CAIROSVG:
+                from io import BytesIO
+                png_data = cairosvg.svg2png(url=svg_path, output_width=16, output_height=16)
+                img = Image.open(BytesIO(png_data))
+                return ImageTk.PhotoImage(img)
+        except Exception as e:
+            print(f"Erreur lors du chargement de l'icône trash: {e}")
+        return None
+    
     def _create_general_tab(self, parent):
         """Crée l'onglet Général."""
         # Raccourci clavier sur une ligne : texte -> bouton changer -> affichage
@@ -767,55 +795,15 @@ class ConfigWindow:
         self.whisper_frame = ttk.LabelFrame(parent, text=self.lang.get("whisper_config_frame"), padding=10)
         # Ne pas packer initialement, sera fait par _update_mode_display()
 
-        # Frame pour le label et le combobox sur la même ligne
-        model_size_row = ttk.Frame(self.whisper_frame)
-        model_size_row.pack(fill=tk.X, pady=2)
+        # Créer le tableau des modèles Whisper
+        self._create_whisper_model_table()
         
-        self.model_size_label = ttk.Label(model_size_row, text=self.lang.get("model_size_label"))
-        self.model_size_label.pack(side=tk.LEFT, padx=(0, 10))
+        # Bouton pour charger le modèle sélectionné
+        load_button_row = ttk.Frame(self.whisper_frame)
+        load_button_row.pack(fill=tk.X, pady=(10, 5))
         
-        model_combo = ttk.Combobox(
-            model_size_row,
-            textvariable=self.whisper_model_var,
-            values=["tiny", "base", "small", "medium", "large"],
-            state="readonly",
-            width=15
-        )
-        model_combo.pack(side=tk.LEFT, padx=(0, 10))
-        model_combo.bind('<<ComboboxSelected>>', lambda e: [self._auto_save(), self._on_model_changed()])
-        
-        # Frame pour l'option CPU/GPU
-        device_row = ttk.Frame(self.whisper_frame)
-        device_row.pack(fill=tk.X, pady=(10, 2))
-        
-        self.device_label = ttk.Label(device_row, text=self.lang.get("whisper_device_label"))
-        self.device_label.pack(side=tk.LEFT, padx=(0, 10))
-        
-        # Radio buttons pour CPU/GPU
-        device_frame = ttk.Frame(device_row)
-        device_frame.pack(side=tk.LEFT)
-        
-        self.cpu_radio = ttk.Radiobutton(
-            device_frame,
-            text=self.lang.get("whisper_device_cpu"),
-            variable=self.whisper_device_var,
-            value="cpu",
-            command=lambda: [self._auto_save(), self._on_device_changed()]
-        )
-        self.cpu_radio.pack(side=tk.LEFT, padx=(0, 15))
-        
-        self.gpu_radio = ttk.Radiobutton(
-            device_frame,
-            text=self.lang.get("whisper_device_gpu"),
-            variable=self.whisper_device_var,
-            value="cuda",
-            command=lambda: [self._auto_save(), self._on_device_changed()]
-        )
-        self.gpu_radio.pack(side=tk.LEFT)
-        
-        # Bouton pour charger le modèle à côté du combobox
         self.load_model_button = ttk.Button(
-            model_size_row,
+            load_button_row,
             text=self.lang.get("load_model_error"),
             command=self._load_whisper_model_async
         )
@@ -823,14 +811,6 @@ class ConfigWindow:
         
         # Mettre à jour l'état du bouton
         self._update_load_model_button()
-        
-        self.model_note_label = ttk.Label(
-            self.whisper_frame,
-            text=self.lang.get("model_note"),
-            font=('Arial', 8),
-            foreground='gray'
-        )
-        self.model_note_label.pack(anchor=tk.W, pady=5)
         
         # Validation Whisper avec indicateur de chargement
         self.whisper_status_label = ttk.Label(self.whisper_frame, text="", foreground='red')
@@ -893,8 +873,8 @@ class ConfigWindow:
         # Initialiser l'affichage selon le mode actuel
         if self.mode_var.get() == "local":
             self._check_whisper()
-            # Mettre à jour l'état du bouton après un court délai pour laisser le temps à l'interface de se créer
-            self.root.after(100, self._update_load_model_button)
+            # Mettre à jour l'état du bouton et du tableau après un court délai pour laisser le temps à l'interface de se créer
+            self.root.after(100, lambda: [self._update_load_model_button(), self._update_whisper_model_table()])
     
     def _create_audio_tab(self, parent):
         """Crée l'onglet Audio."""
@@ -985,6 +965,233 @@ class ConfigWindow:
             command=self._reset_widget_position
         )
         self.reset_widget_position_button.pack(anchor=tk.W, pady=5)
+        
+        # Checkbox pour le démarrage automatique
+        self.startup_checkbox = ttk.Checkbutton(
+            self.interface_section_frame,
+            text=self.lang.get("startup_checkbox"),
+            variable=self.startup_enabled_var,
+            command=self._on_startup_changed
+        )
+        self.startup_checkbox.pack(anchor=tk.W, pady=5)
+
+    def _create_keywords_tab(self, parent):
+        """Crée la section de configuration des mots-clés."""
+        keywords_section_frame = ttk.Frame(parent)
+        keywords_section_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        
+        # Titre
+        keywords_title_label = ttk.Label(
+            keywords_section_frame,
+            text=self.lang.get("keywords_config_title"),
+            font=('Arial', 10, 'bold')
+        )
+        keywords_title_label.pack(anchor=tk.W, pady=(0, 5))
+        
+        # Description
+        keywords_desc_label = ttk.Label(
+            keywords_section_frame,
+            text=self.lang.get("keywords_description"),
+            font=('Arial', 8),
+            foreground='gray'
+        )
+        keywords_desc_label.pack(anchor=tk.W, pady=(0, 15))
+        
+        # Frame pour ajouter un nouveau mot-clé
+        add_frame = ttk.Frame(keywords_section_frame)
+        add_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Champ mot-clé
+        ttk.Label(add_frame, text=self.lang.get("keyword_label")).pack(side=tk.LEFT, padx=(0, 5))
+        keyword_entry = ttk.Entry(add_frame, width=20)
+        keyword_entry.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Champ remplacement
+        ttk.Label(add_frame, text=self.lang.get("replacement_label")).pack(side=tk.LEFT, padx=(0, 5))
+        replacement_entry = ttk.Entry(add_frame, width=20)
+        replacement_entry.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Bouton ajouter
+        def add_keyword():
+            keyword = keyword_entry.get().strip()
+            replacement = replacement_entry.get().strip()
+            if keyword and replacement:
+                keywords = self.config.get("text_processing.keywords", {})
+                keywords[keyword] = replacement
+                self.config.set("text_processing.keywords", keywords)
+                self.config.save()
+                keyword_entry.delete(0, tk.END)
+                replacement_entry.delete(0, tk.END)
+                self._update_keywords_table()
+                if self.on_save:
+                    self.on_save()
+        
+        add_button = ttk.Button(
+            add_frame,
+            text=self.lang.get("add_keyword_button"),
+            command=add_keyword
+        )
+        add_button.pack(side=tk.LEFT)
+        
+        # Tableau des mots-clés existants
+        table_frame = ttk.Frame(keywords_section_frame)
+        table_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        # Largeurs fixes pour les colonnes (définies une seule fois)
+        KEYWORD_COL_WIDTH = 200
+        REPLACEMENT_COL_WIDTH = 200
+        DELETE_COL_WIDTH = 50
+        
+        # En-têtes avec largeurs fixes pour l'alignement
+        header_frame = ttk.Frame(table_frame)
+        header_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        # Configurer les colonnes avec largeurs fixes
+        header_frame.grid_columnconfigure(0, minsize=KEYWORD_COL_WIDTH, weight=0)
+        header_frame.grid_columnconfigure(1, minsize=REPLACEMENT_COL_WIDTH, weight=0)
+        header_frame.grid_columnconfigure(2, minsize=DELETE_COL_WIDTH, weight=0)
+        
+        # Colonne 0: Mot-clé
+        keyword_header_frame = ttk.Frame(header_frame)
+        keyword_header_frame.grid(row=0, column=0, sticky=tk.W)
+        keyword_header_frame.config(width=KEYWORD_COL_WIDTH)
+        keyword_header_frame.grid_propagate(False)
+        ttk.Label(
+            keyword_header_frame,
+            text=self.lang.get("keyword_column"),
+            font=('Arial', 9, 'bold')
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # Colonne 1: Remplacement (aligné à gauche)
+        replacement_header_frame = ttk.Frame(header_frame)
+        replacement_header_frame.grid(row=0, column=1, sticky=tk.W)
+        replacement_header_frame.config(width=REPLACEMENT_COL_WIDTH)
+        replacement_header_frame.grid_propagate(False)
+        ttk.Label(
+            replacement_header_frame,
+            text=self.lang.get("replacement_column"),
+            font=('Arial', 9, 'bold')
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # Colonne 2: Supprimer (vide pour l'en-tête)
+        delete_header_frame = ttk.Frame(header_frame, width=DELETE_COL_WIDTH)
+        delete_header_frame.grid(row=0, column=2, sticky="")
+        delete_header_frame.grid_propagate(False)
+        
+        # Frame scrollable pour la liste
+        list_canvas = tk.Canvas(table_frame, height=150)
+        list_scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=list_canvas.yview)
+        list_scrollable_frame = ttk.Frame(list_canvas)
+        
+        list_scrollable_frame.bind(
+            "<Configure>",
+            lambda e: list_canvas.configure(scrollregion=list_canvas.bbox("all"))
+        )
+        
+        list_canvas.create_window((0, 0), window=list_scrollable_frame, anchor="nw")
+        list_canvas.configure(yscrollcommand=list_scrollbar.set)
+        
+        list_scrollbar.pack(side="right", fill="y")
+        list_canvas.pack(side="left", fill="both", expand=True)
+        
+        # Stocker les références
+        self.keywords_table_frame = list_scrollable_frame
+        self.keywords_list_canvas = list_canvas
+        self.keyword_entry = keyword_entry
+        self.replacement_entry = replacement_entry
+        
+        # Mettre à jour le tableau
+        self._update_keywords_table()
+    
+    def _update_keywords_table(self):
+        """Met à jour le tableau des mots-clés."""
+        if not hasattr(self, 'keywords_table_frame'):
+            return
+        
+        # Supprimer tous les widgets existants
+        for widget in self.keywords_table_frame.winfo_children():
+            widget.destroy()
+        
+        keywords = self.config.get("text_processing.keywords", {})
+        
+        if not keywords:
+            ttk.Label(
+                self.keywords_table_frame,
+                text=self.lang.get("no_keywords"),
+                foreground='gray'
+            ).pack(anchor=tk.W, padx=5, pady=10)
+        else:
+            # Largeurs fixes pour les colonnes (mêmes que les en-têtes)
+            KEYWORD_COL_WIDTH = 200
+            REPLACEMENT_COL_WIDTH = 200
+            DELETE_COL_WIDTH = 50
+            
+            for keyword, replacement in keywords.items():
+                row_frame = ttk.Frame(self.keywords_table_frame)
+                row_frame.pack(fill=tk.X, pady=2)
+                
+                # Configurer les colonnes avec largeurs fixes
+                row_frame.grid_columnconfigure(0, minsize=KEYWORD_COL_WIDTH, weight=0)
+                row_frame.grid_columnconfigure(1, minsize=REPLACEMENT_COL_WIDTH, weight=0)
+                row_frame.grid_columnconfigure(2, minsize=DELETE_COL_WIDTH, weight=0)
+                
+                # Colonne 0: Mot-clé
+                keyword_frame = ttk.Frame(row_frame)
+                keyword_frame.grid(row=0, column=0, sticky=tk.W)
+                keyword_frame.config(width=KEYWORD_COL_WIDTH)
+                keyword_frame.grid_propagate(False)
+                ttk.Label(keyword_frame, text=keyword).pack(side=tk.LEFT, padx=5)
+                
+                # Colonne 1: Remplacement (aligné à gauche)
+                replacement_frame = ttk.Frame(row_frame)
+                replacement_frame.grid(row=0, column=1, sticky=tk.W)
+                replacement_frame.config(width=REPLACEMENT_COL_WIDTH)
+                replacement_frame.grid_propagate(False)
+                ttk.Label(replacement_frame, text=replacement).pack(side=tk.LEFT, padx=5)
+                
+                # Colonne 2: Bouton supprimer avec icône poubelle
+                delete_frame = ttk.Frame(row_frame)
+                delete_frame.grid(row=0, column=2, sticky="")
+                delete_frame.config(width=DELETE_COL_WIDTH)
+                delete_frame.grid_propagate(False)
+                
+                def delete_keyword(k=keyword):
+                    keywords = self.config.get("text_processing.keywords", {})
+                    if k in keywords:
+                        del keywords[k]
+                        self.config.set("text_processing.keywords", keywords)
+                        self.config.save()
+                        self._update_keywords_table()
+                        if self.on_save:
+                            self.on_save()
+                
+                # Charger l'icône trash.svg
+                trash_icon = self._load_trash_icon()
+                if trash_icon:
+                    # Stocker l'icône pour éviter la garbage collection
+                    if not hasattr(self, '_keywords_trash_icons'):
+                        self._keywords_trash_icons = []
+                    self._keywords_trash_icons.append(trash_icon)
+                    
+                    delete_btn = ttk.Button(
+                        delete_frame,
+                        image=trash_icon,
+                        command=delete_keyword
+                    )
+                    delete_btn.pack(expand=True, padx=2, pady=2)
+                else:
+                    # Fallback: texte simple
+                    delete_btn = ttk.Button(
+                        delete_frame,
+                        text="🗑",
+                        command=delete_keyword
+                    )
+                    delete_btn.pack(expand=True, padx=2, pady=2)
+        
+        # Ajuster la largeur du canvas
+        if hasattr(self, 'keywords_list_canvas'):
+            self.keywords_list_canvas.update_idletasks()
+            self.keywords_list_canvas.configure(scrollregion=self.keywords_list_canvas.bbox("all"))
 
     def _create_processing_mode_section(self, parent):
         """Crée la section Mode de traitement."""
@@ -1109,6 +1316,12 @@ class ConfigWindow:
             self.widget_checkbox.config(text=self.lang.get("show_widget_checkbox"))
         if hasattr(self, 'reset_widget_position_button'):
             self.reset_widget_position_button.config(text=self.lang.get("reset_widget_position"))
+        if hasattr(self, 'startup_checkbox'):
+            self.startup_checkbox.config(text=self.lang.get("startup_checkbox"))
+        
+        # Mettre à jour les widgets des mots-clés
+        if hasattr(self, 'keywords_table_frame'):
+            self._update_keywords_table()
         
         # Mettre à jour le label de langue
         if hasattr(self, 'language_label'):
@@ -1215,8 +1428,8 @@ class ConfigWindow:
             if hasattr(self, 'whisper_frame'):
                 self.whisper_frame.pack(fill=tk.X, padx=10, pady=10)
             self._check_whisper()
-            # Mettre à jour l'état du bouton
-            self.root.after(100, self._update_load_model_button)
+            # Mettre à jour l'état du bouton et du tableau
+            self.root.after(100, lambda: [self._update_load_model_button(), self._update_whisper_model_table()])
         else:
             # Mode API : afficher API, masquer Whisper
             # Si on passe en mode API, arrêter le chargement du modèle si en cours
@@ -1327,6 +1540,21 @@ class ConfigWindow:
         # self.whisper_progress.pack(anchor=tk.W, pady=5)
         # self.whisper_progress.start(10)  # Animation de la progress bar
         
+        # Créer un timer pour vérifier périodiquement si le modèle est téléchargé
+        # et mettre à jour le tableau (pour afficher la poubelle dès que le fichier existe)
+        def check_download_status():
+            """Vérifie périodiquement si le modèle est téléchargé et met à jour le tableau."""
+            if self._model_loading_in_progress:
+                # Vérifier si le modèle est maintenant téléchargé
+                if self._is_model_downloaded(model_name):
+                    # Mettre à jour le tableau pour afficher la poubelle
+                    self.root.after_idle(lambda: self._update_whisper_model_table())
+                # Continuer à vérifier toutes les 500ms pendant le chargement
+                self.root.after(500, check_download_status)
+        
+        # Démarrer la vérification périodique
+        self.root.after(500, check_download_status)
+        
         def load_model_thread():
             """Charge le modèle dans un thread séparé."""
             try:
@@ -1338,7 +1566,7 @@ class ConfigWindow:
                     # Vérifier que le mode est toujours "local"
                     if service.mode != "local":
                         print(f"[Configuration] Chargement annulé : le mode a changé vers '{service.mode}'")
-                        self.root.after(0, lambda: self._on_model_loaded(False, model_name, self.lang.get("status_cancelled")))
+                        self.root.after_idle(lambda: self._on_model_loaded(False, model_name, self.lang.get("status_cancelled")))
                         return
                     
                     # Callback pour mettre à jour l'interface avec la progression
@@ -1348,10 +1576,20 @@ class ConfigWindow:
                         if self.app_instance and self.app_instance.transcription_service:
                             if self.app_instance.transcription_service.mode != "local":
                                 return  # Ne pas mettre à jour si le mode a changé
-                        self.root.after(0, lambda: self.whisper_status_label.config(
-                            text=f"⏳ Téléchargement: {message}",
+                        # Utiliser after_idle pour permettre à Tkinter de traiter les événements
+                        self.root.after_idle(lambda msg=message: self.whisper_status_label.config(
+                            text=f"⏳ Téléchargement: {msg}",
                             foreground='#4EC9B0'
                         ))
+                        # Vérifier si le téléchargement est terminé (100% ou fichier existe)
+                        # et mettre à jour le tableau pour afficher la poubelle
+                        if "100%" in message or self._is_model_downloaded(model_name):
+                            self.root.after_idle(lambda: self._update_whisper_model_table())
+                        # Forcer le traitement des événements en attente
+                        try:
+                            self.root.update_idletasks()
+                        except:
+                            pass
                     
                     success = service.load_whisper_model(progress_callback=progress_callback)
                 else:
@@ -1365,10 +1603,20 @@ class ConfigWindow:
                     # Callback pour mettre à jour l'interface avec la progression
                     def progress_callback(message):
                         """Met à jour l'interface avec le message de progression."""
-                        self.root.after(0, lambda: self.whisper_status_label.config(
-                            text=f"⏳ Téléchargement: {message}",
+                        # Utiliser after_idle pour permettre à Tkinter de traiter les événements
+                        self.root.after_idle(lambda msg=message: self.whisper_status_label.config(
+                            text=f"⏳ Téléchargement: {msg}",
                             foreground='#4EC9B0'
                         ))
+                        # Vérifier si le téléchargement est terminé (100% ou fichier existe)
+                        # et mettre à jour le tableau pour afficher la poubelle
+                        if "100%" in message or self._is_model_downloaded(model_name):
+                            self.root.after_idle(lambda: self._update_whisper_model_table())
+                        # Forcer le traitement des événements en attente
+                        try:
+                            self.root.update_idletasks()
+                        except:
+                            pass
                     
                     success = service.load_whisper_model(progress_callback=progress_callback)
                     
@@ -1389,14 +1637,37 @@ class ConfigWindow:
                 print(f"[Configuration] Erreur lors du chargement du modèle: {e}")
                 import traceback
                 traceback.print_exc()
-                self.root.after(0, lambda: self._on_model_loaded(False, model_name, str(e)))
+                self.root.after_idle(lambda: self._on_model_loaded(False, model_name, str(e)))
             finally:
                 # Réinitialiser le flag dans le thread principal
-                self.root.after(0, lambda: setattr(self, '_model_loading_in_progress', False))
+                self.root.after_idle(lambda: setattr(self, '_model_loading_in_progress', False))
         
         # Lancer le chargement dans un thread séparé
         self._loading_thread = threading.Thread(target=load_model_thread, daemon=True)
         self._loading_thread.start()
+        
+        # Créer un timer pour forcer Tkinter à traiter les événements pendant le chargement
+        # Cela est nécessaire car whisper.load_model() peut bloquer le GIL même dans un thread
+        def process_events():
+            """Force Tkinter à traiter les événements en attente."""
+            if self._model_loading_in_progress:
+                try:
+                    # Utiliser update() avec un timeout très court pour traiter les événements
+                    # sans bloquer trop longtemps
+                    self.root.update()
+                    # Programmer le prochain appel très rapidement pour maintenir la réactivité
+                    self.root.after(10, process_events)
+                except tk.TclError:
+                    # La fenêtre a été fermée, arrêter
+                    pass
+                except Exception:
+                    # Autre erreur, continuer quand même
+                    if self._model_loading_in_progress:
+                        self.root.after(10, process_events)
+        
+        # Démarrer le traitement périodique des événements immédiatement
+        # Utiliser un délai très court pour maintenir la réactivité
+        self.root.after(10, process_events)
     
     def _on_model_loaded(self, success: bool, model_name: str, error: str = None):
         """Appelé quand le chargement du modèle est terminé."""
@@ -1417,8 +1688,9 @@ class ConfigWindow:
                 foreground='#4EC9B0'
             )
             print(f"[Configuration] [OK] Modele '{model_name}' charge avec succes dans l'interface")
-            # Mettre à jour le bouton
+            # Mettre à jour le bouton et le tableau
             self._update_load_model_button()
+            self._update_whisper_model_table()
             # Recharger les composants pour mettre à jour le statut
             if self.on_save:
                 self.on_save()
@@ -1434,29 +1706,421 @@ class ConfigWindow:
             # Mettre à jour le bouton
             self._update_load_model_button()
     
+    def _create_whisper_model_table(self):
+        """Crée le tableau des modèles Whisper avec sélection CPU/GPU."""
+        # Modèles disponibles avec leurs tailles
+        models = [
+            ("tiny", "~75 MB"),
+            ("base", "~150 MB"),
+            ("small", "~500 MB"),
+            ("medium", "~1.5 GB"),
+            ("large", "~3 GB")
+        ]
+        
+        # Largeurs fixes pour chaque colonne (définies une seule fois)
+        COL_WIDTH_DELETE = 50  # Colonne poubelle (augmentée pour voir le bouton)
+        COL_WIDTH_MODEL = 180  # Colonne nom du modèle
+        COL_WIDTH_CPU = 60     # Colonne CPU
+        COL_WIDTH_GPU = 60     # Colonne GPU
+        
+        # Créer un frame pour le tableau
+        table_frame = ttk.Frame(self.whisper_frame)
+        table_frame.pack(fill=tk.X, pady=5)
+        
+        # En-têtes du tableau
+        header_frame = ttk.Frame(table_frame)
+        header_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        # Configurer les largeurs fixes des colonnes
+        header_frame.grid_columnconfigure(0, minsize=COL_WIDTH_DELETE, weight=0)
+        header_frame.grid_columnconfigure(1, minsize=COL_WIDTH_MODEL, weight=0)
+        header_frame.grid_columnconfigure(2, minsize=COL_WIDTH_CPU, weight=0)
+        header_frame.grid_columnconfigure(3, minsize=COL_WIDTH_GPU, weight=0)
+        
+        # Colonne 0: Supprimer (vide pour l'en-tête, dans un frame de largeur fixe)
+        empty_header_frame = ttk.Frame(header_frame, width=COL_WIDTH_DELETE)
+        empty_header_frame.grid(row=0, column=0, sticky="")
+        empty_header_frame.grid_propagate(False)
+        
+        # Colonne 1: Modèle (aligné à gauche)
+        model_header_text = self.lang.get("model_size_label")
+        if not model_header_text or model_header_text == "model_size_label":
+            model_header_text = "Modèle"
+        if ":" in model_header_text:
+            model_header_text = model_header_text.replace(":", "")
+        model_header_frame = ttk.Frame(header_frame, width=COL_WIDTH_MODEL)
+        model_header_frame.grid(row=0, column=1, sticky=tk.W)
+        model_header_frame.grid_propagate(False)
+        model_header = ttk.Label(model_header_frame, text=model_header_text, font=('Arial', 9, 'bold'))
+        model_header.pack(side=tk.LEFT, padx=5)
+        
+        # Colonne 2: CPU (centré dans un frame de largeur fixe)
+        cpu_header_text = self.lang.get("whisper_device_cpu")
+        if not cpu_header_text or cpu_header_text == "whisper_device_cpu":
+            cpu_header_text = "CPU"
+        cpu_header_frame = ttk.Frame(header_frame)
+        cpu_header_frame.grid(row=0, column=2, sticky="")
+        cpu_header_frame.config(width=COL_WIDTH_CPU)
+        cpu_header_frame.grid_propagate(False)
+        cpu_header = ttk.Label(cpu_header_frame, text=cpu_header_text, font=('Arial', 9, 'bold'))
+        cpu_header.pack(expand=True, fill=tk.NONE)
+        
+        # Colonne 3: GPU (centré dans un frame de largeur fixe)
+        gpu_header_text = self.lang.get("whisper_device_gpu")
+        if not gpu_header_text or gpu_header_text == "whisper_device_gpu":
+            gpu_header_text = "GPU"
+        else:
+            gpu_header_text = gpu_header_text.replace(" (CUDA)", "")
+        gpu_header_frame = ttk.Frame(header_frame)
+        gpu_header_frame.grid(row=0, column=3, sticky="")
+        gpu_header_frame.config(width=COL_WIDTH_GPU)
+        gpu_header_frame.grid_propagate(False)
+        gpu_header = ttk.Label(gpu_header_frame, text=gpu_header_text, font=('Arial', 9, 'bold'))
+        gpu_header.pack(expand=True)
+        
+        # Stocker les références aux widgets pour mise à jour
+        self.model_table_widgets = {}
+        
+        # Créer une ligne pour chaque modèle
+        for idx, (model_name, model_size) in enumerate(models, start=1):
+            row_frame = ttk.Frame(table_frame)
+            row_frame.pack(fill=tk.X, pady=2)
+            
+            # Configurer les largeurs fixes des colonnes (mêmes que les en-têtes)
+            row_frame.grid_columnconfigure(0, minsize=COL_WIDTH_DELETE, weight=0)
+            row_frame.grid_columnconfigure(1, minsize=COL_WIDTH_MODEL, weight=0)
+            row_frame.grid_columnconfigure(2, minsize=COL_WIDTH_CPU, weight=0)
+            row_frame.grid_columnconfigure(3, minsize=COL_WIDTH_GPU, weight=0)
+            
+            # Colonne 0: Frame avec largeur fixe pour le bouton de suppression
+            delete_frame = ttk.Frame(row_frame)
+            delete_frame.grid(row=0, column=0, sticky="")
+            delete_frame.config(width=COL_WIDTH_DELETE)
+            delete_frame.grid_propagate(False)
+            
+            delete_button = None
+            invisible_widget = None
+            is_downloaded = self._is_model_downloaded(model_name)
+            if is_downloaded:
+                # Charger l'icône trash.svg
+                trash_icon = self._load_trash_icon()
+                if trash_icon:
+                    # Stocker l'icône pour éviter la garbage collection
+                    if not hasattr(self, '_trash_icons'):
+                        self._trash_icons = []
+                    self._trash_icons.append(trash_icon)
+                    
+                    delete_button = ttk.Button(
+                        delete_frame,
+                        image=trash_icon,
+                        command=lambda m=model_name: self._delete_single_model(m)
+                    )
+                    delete_button.pack(expand=True, padx=2, pady=2)
+                else:
+                    # Fallback: texte simple
+                    delete_button = ttk.Button(
+                        delete_frame,
+                        text="🗑",
+                        command=lambda m=model_name: self._delete_single_model(m)
+                    )
+                    delete_button.pack(expand=True, padx=2, pady=2)
+            else:
+                # Widget invisible pour maintenir la largeur de la colonne
+                invisible_widget = ttk.Label(delete_frame, text="", width=1)
+                invisible_widget.pack(expand=True)
+            
+            # Colonne 1: Frame avec largeur fixe pour le nom du modèle
+            model_frame = ttk.Frame(row_frame)
+            model_frame.grid(row=0, column=1, sticky=tk.W)
+            model_frame.config(width=COL_WIDTH_MODEL)
+            model_frame.grid_propagate(False)
+            
+            model_label_text = f"{model_name.upper()} ({model_size})"
+            model_label = ttk.Label(model_frame, text=model_label_text)
+            model_label.pack(side=tk.LEFT, padx=5)
+            
+            # Vérifier si le modèle est téléchargé pour la couleur
+            if is_downloaded:
+                model_label.config(foreground='green')
+            else:
+                model_label.config(foreground='black')
+            
+            # Colonne 2: Radio button CPU pour ce modèle (aligné sur la colonne CPU)
+            cpu_var = tk.StringVar()
+            cpu_frame = ttk.Frame(row_frame)
+            cpu_frame.grid(row=0, column=2, sticky="")
+            cpu_frame.config(width=COL_WIDTH_CPU)
+            cpu_frame.grid_propagate(False)  # Empêcher le frame de rétrécir
+            cpu_radio = ttk.Radiobutton(
+                cpu_frame,
+                variable=cpu_var,
+                value="cpu",
+                command=lambda m=model_name: self._on_model_device_selected(m, "cpu")
+            )
+            cpu_radio.pack(expand=True, fill=tk.NONE)  # Centrer le radio dans le frame
+            
+            # Colonne 3: Radio button GPU pour ce modèle (aligné sur la colonne GPU)
+            gpu_var = tk.StringVar()
+            gpu_frame = ttk.Frame(row_frame)
+            gpu_frame.grid(row=0, column=3, sticky="")
+            gpu_frame.config(width=COL_WIDTH_GPU)
+            gpu_frame.grid_propagate(False)  # Empêcher le frame de rétrécir
+            gpu_radio = ttk.Radiobutton(
+                gpu_frame,
+                variable=gpu_var,
+                value="cuda",
+                command=lambda m=model_name: self._on_model_device_selected(m, "cuda")
+            )
+            gpu_radio.pack(expand=True, fill=tk.NONE)  # Centrer le radio dans le frame
+            
+            # Stocker les références
+            self.model_table_widgets[model_name] = {
+                'label': model_label,
+                'delete_button': delete_button,
+                'invisible_widget': invisible_widget if not is_downloaded else None,
+                'delete_frame': delete_frame,
+                'cpu_radio': cpu_radio,
+                'gpu_radio': gpu_radio,
+                'cpu_var': cpu_var,
+                'gpu_var': gpu_var,
+                'row_frame': row_frame
+            }
+        
+        # Mettre à jour l'affichage initial
+        self._update_whisper_model_table()
+    
+    def _is_model_downloaded(self, model_name: str) -> bool:
+        """Vérifie si un modèle Whisper est téléchargé."""
+        try:
+            from pathlib import Path
+            cache_dir = Path.home() / ".cache" / "whisper"
+            model_file = cache_dir / f"{model_name}.pt"
+            return model_file.exists()
+        except Exception:
+            return False
+    
+    def _on_model_device_selected(self, model_name: str, device: str):
+        """Appelé quand un device (CPU/GPU) est sélectionné pour un modèle."""
+        # Mettre à jour le modèle sélectionné si ce n'est pas déjà le cas
+        if self.whisper_model_var.get() != model_name:
+            self.whisper_model_var.set(model_name)
+        # Mettre à jour le device sélectionné
+        self.whisper_device_var.set(device)
+        # Sauvegarder
+        self._auto_save()
+        self._on_model_changed()
+        # Mettre à jour le tableau pour refléter la sélection
+        self._update_whisper_model_table()
+    
+    def _update_whisper_model_table(self):
+        """Met à jour l'affichage du tableau des modèles."""
+        if not hasattr(self, 'model_table_widgets'):
+            return
+        
+        current_model = self.whisper_model_var.get()
+        current_device = self.whisper_device_var.get()
+        
+        for model_name, widgets in self.model_table_widgets.items():
+            # Mettre à jour la couleur du label selon si le modèle est téléchargé
+            is_downloaded = self._is_model_downloaded(model_name)
+            if is_downloaded:
+                widgets['label'].config(foreground='green')
+                # Afficher le bouton de suppression si le modèle est téléchargé
+                if widgets.get('delete_button'):
+                    widgets['delete_button'].pack(expand=True)
+                # Masquer le widget invisible si présent
+                if widgets.get('invisible_widget'):
+                    widgets['invisible_widget'].pack_forget()
+            else:
+                widgets['label'].config(foreground='black')
+                # Masquer le bouton de suppression si le modèle n'est pas téléchargé
+                if widgets.get('delete_button'):
+                    widgets['delete_button'].pack_forget()
+                # Afficher le widget invisible pour maintenir la largeur
+                if widgets.get('invisible_widget'):
+                    widgets['invisible_widget'].pack(expand=True)
+                elif widgets.get('delete_frame'):
+                    # Créer le widget invisible si nécessaire
+                    invisible_widget = ttk.Label(widgets['delete_frame'], text="", width=1)
+                    invisible_widget.pack(expand=True)
+                    widgets['invisible_widget'] = invisible_widget
+            
+            # Mettre à jour les radios device selon la sélection
+            if model_name == current_model:
+                # C'est le modèle sélectionné, mettre à jour les radios
+                if current_device == "cpu":
+                    widgets['cpu_var'].set("cpu")
+                    widgets['gpu_var'].set("")
+                else:
+                    widgets['cpu_var'].set("")
+                    widgets['gpu_var'].set("cuda")
+            else:
+                # Ce n'est pas le modèle sélectionné, désélectionner les radios
+                widgets['cpu_var'].set("")
+                widgets['gpu_var'].set("")
+    
+    def _delete_single_model(self, model_name: str):
+        """Supprime un seul modèle Whisper téléchargé (sauf s'il est chargé)."""
+        from pathlib import Path
+        
+        try:
+            # Vérifier si le modèle est actuellement chargé
+            is_loaded = False
+            if self.app_instance and self.app_instance.transcription_service:
+                service = self.app_instance.transcription_service
+                if (service.mode == "local" and 
+                    service.is_model_loaded() and 
+                    service.whisper_model == model_name):
+                    is_loaded = True
+            
+            if is_loaded:
+                messagebox.showwarning(
+                    "Attention", 
+                    f"Le modèle '{model_name}' est actuellement chargé. Déchargez-le d'abord avant de le supprimer."
+                )
+                return
+            
+            # Vérifier si le modèle est téléchargé
+            if not self._is_model_downloaded(model_name):
+                messagebox.showinfo("Information", f"Le modèle '{model_name}' n'est pas téléchargé.")
+                return
+            
+            # Demander confirmation
+            if not messagebox.askyesno("Confirmation", f"Voulez-vous supprimer le modèle '{model_name}' ?"):
+                return
+            
+            # Supprimer le modèle
+            cache_dir = Path.home() / ".cache" / "whisper"
+            model_file = cache_dir / f"{model_name}.pt"
+            
+            if model_file.exists():
+                try:
+                    model_file.unlink()
+                    print(f"[Configuration] Modèle '{model_name}' supprimé")
+                    
+                    # Mettre à jour l'affichage
+                    self._update_whisper_model_table()
+                    
+                    messagebox.showinfo("Succès", f"Le modèle '{model_name}' a été supprimé.")
+                except Exception as e:
+                    print(f"[Configuration] Erreur lors de la suppression de '{model_name}': {e}")
+                    messagebox.showerror("Erreur", f"Erreur lors de la suppression du modèle: {e}")
+            else:
+                messagebox.showinfo("Information", f"Le modèle '{model_name}' n'est pas téléchargé.")
+                
+        except Exception as e:
+            print(f"[Configuration] Erreur lors de la suppression du modèle: {e}")
+            messagebox.showerror("Erreur", f"Erreur lors de la suppression du modèle: {e}")
+    
+    def _delete_downloaded_models(self):
+        """Supprime les modèles Whisper téléchargés (sauf celui qui est chargé)."""
+        from pathlib import Path
+        import os
+        
+        try:
+            # Récupérer le modèle actuellement chargé
+            loaded_model = None
+            if self.app_instance and self.app_instance.transcription_service:
+                service = self.app_instance.transcription_service
+                if service.mode == "local" and service.is_model_loaded():
+                    loaded_model = service.whisper_model
+            
+            # Demander confirmation
+            if loaded_model:
+                confirm_msg = f"Voulez-vous supprimer tous les modèles téléchargés sauf '{loaded_model}' (qui est actuellement chargé) ?"
+            else:
+                confirm_msg = "Voulez-vous supprimer tous les modèles téléchargés ?"
+            
+            if not messagebox.askyesno("Confirmation", confirm_msg):
+                return
+            
+            # Récupérer le répertoire de cache Whisper
+            cache_dir = Path.home() / ".cache" / "whisper"
+            if not cache_dir.exists():
+                messagebox.showinfo("Information", "Aucun modèle téléchargé.")
+                return
+            
+            # Liste des modèles disponibles
+            models = ["tiny", "base", "small", "medium", "large"]
+            deleted_count = 0
+            skipped_count = 0
+            
+            for model_name in models:
+                model_file = cache_dir / f"{model_name}.pt"
+                if model_file.exists():
+                    # Ne pas supprimer le modèle actuellement chargé
+                    if model_name == loaded_model:
+                        skipped_count += 1
+                        print(f"[Configuration] Modèle '{model_name}' non supprimé (actuellement chargé)")
+                        continue
+                    
+                    try:
+                        model_file.unlink()
+                        deleted_count += 1
+                        print(f"[Configuration] Modèle '{model_name}' supprimé")
+                    except Exception as e:
+                        print(f"[Configuration] Erreur lors de la suppression de '{model_name}': {e}")
+            
+            # Mettre à jour l'affichage
+            self._update_whisper_model_table()
+            
+            # Afficher un message de confirmation
+            if deleted_count > 0:
+                messagebox.showinfo("Succès", f"{deleted_count} modèle(s) supprimé(s).")
+            elif skipped_count > 0:
+                messagebox.showinfo("Information", f"Le modèle '{loaded_model}' n'a pas été supprimé car il est actuellement chargé.")
+            else:
+                messagebox.showinfo("Information", "Aucun modèle à supprimer.")
+                
+        except Exception as e:
+            print(f"[Configuration] Erreur lors de la suppression des modèles: {e}")
+            messagebox.showerror("Erreur", f"Erreur lors de la suppression des modèles: {e}")
+    
     def _update_load_model_button(self):
         """Met à jour l'état du bouton de chargement du modèle."""
         if not hasattr(self, 'load_model_button'):
             return
         
         try:
+            current_model = self.whisper_model_var.get()
+            current_device = self.whisper_device_var.get()
+            
             # Vérifier si le modèle est chargé dans le service de transcription de l'application
+            is_loaded = False
             if self.app_instance and self.app_instance.transcription_service:
                 service = self.app_instance.transcription_service
-                if service.mode == "local" and service.is_model_loaded():
-                    self.load_model_button.config(text=self.lang.get("load_model_loaded"), state="normal")
-                else:
-                    self.load_model_button.config(text=self.lang.get("load_model"), state="normal")
+                if (service.mode == "local" and 
+                    service.is_model_loaded() and 
+                    service.whisper_model == current_model and
+                    service.whisper_device == current_device):
+                    is_loaded = True
+            
+            if is_loaded:
+                # Modèle chargé et sauvegardé - bouton avec texte vert
+                self.load_model_button.config(
+                    text=self.lang.get("load_model_loaded"), 
+                    state="normal",
+                    style="TButton"
+                )
+                # Changer la couleur du texte en vert pour indiquer que le modèle est chargé
+                try:
+                    style = ttk.Style()
+                    style.map("Green.TButton",
+                             foreground=[('active', '#4CAF50'), ('!active', '#4CAF50')])
+                    self.load_model_button.config(style="Green.TButton")
+                except:
+                    # Si le style ne fonctionne pas, utiliser la configuration normale
+                    self.load_model_button.config(style="TButton")
             else:
-                # Si pas d'instance, vérifier avec un nouveau service
-                service = TranscriptionService(mode="local", whisper_model=self.whisper_model_var.get())
-                if service.is_model_loaded():
-                    self.load_model_button.config(text=self.lang.get("load_model_loaded"), state="normal")
-                else:
-                    self.load_model_button.config(text=self.lang.get("load_model"), state="normal")
+                # Modèle non chargé - bouton normal
+                self.load_model_button.config(
+                    text=self.lang.get("load_model"), 
+                    state="normal",
+                    style="TButton"  # Style par défaut
+                )
         except Exception as e:
             print(f"Erreur lors de la mise à jour du bouton: {e}")
-            self.load_model_button.config(text="❌ Charger le modèle", state="normal")
+            self.load_model_button.config(text="❌ Charger le modèle", state="normal", style="TButton")
     
     def _on_model_changed(self):
         """Appelé quand la taille du modèle change."""
@@ -1465,7 +2129,7 @@ class ConfigWindow:
             print("[Configuration] Arrêt du chargement : changement de modèle")
             self._model_loading_in_progress = False
             if hasattr(self, 'load_model_button'):
-                self.load_model_button.config(text="❌ Charger le modèle", state="normal")
+                self.load_model_button.config(text="❌ Charger le modèle", state="normal", style="TButton")
         
         # Mettre à jour l'état du bouton (le modèle précédent n'est plus valide)
         if self.mode_var.get() == "local":
@@ -1482,7 +2146,7 @@ class ConfigWindow:
             print("[Configuration] Arrêt du chargement : changement de device")
             self._model_loading_in_progress = False
             if hasattr(self, 'load_model_button'):
-                self.load_model_button.config(text="❌ Charger le modèle", state="normal")
+                self.load_model_button.config(text="❌ Charger le modèle", state="normal", style="TButton")
         
         # Mettre à jour l'état du bouton (le modèle doit être rechargé avec le nouveau device)
         if self.mode_var.get() == "local":
@@ -1620,6 +2284,26 @@ class ConfigWindow:
             import traceback
             traceback.print_exc()
     
+    def _on_startup_changed(self):
+        """Appelé quand l'option de démarrage automatique change."""
+        try:
+            from startup_manager import set_startup
+            enabled = self.startup_enabled_var.get()
+            success = set_startup(enabled)
+            if success:
+                self.config.set("startup.enabled", enabled)
+                self.config.save()
+                status = self.lang.get("startup_enabled" if enabled else "startup_disabled")
+                print(f"[Configuration] {status}")
+            else:
+                # En cas d'erreur, remettre la valeur précédente
+                self.startup_enabled_var.set(not enabled)
+                print("[Configuration] ERREUR: Impossible de modifier le démarrage automatique")
+        except Exception as e:
+            print(f"[Configuration] Erreur dans _on_startup_changed: {e}")
+            import traceback
+            traceback.print_exc()
+    
     def _reset_widget_position(self):
         """Réinitialise la position du widget à la position par défaut."""
         try:
@@ -1685,6 +2369,9 @@ class ConfigWindow:
             device_name = self.selected_device_var.get()
             if device_name and hasattr(self, 'device_map') and device_name in self.device_map:
                 self.config.set("audio.device_index", self.device_map[device_name])
+        
+        # Sauvegarder le démarrage automatique
+        self.config.set("startup.enabled", self.startup_enabled_var.get())
         
         # Sauvegarder
         self.config.save()
